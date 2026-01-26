@@ -1,6 +1,12 @@
 package xiaozhi.modules.agent.service.impl;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -81,9 +87,9 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
 
         if (agent.getMemModelId() != null && agent.getMemModelId().equals(Constant.MEMORY_NO_MEM)) {
             agent.setChatHistoryConf(Constant.ChatHistoryConfEnum.IGNORE.getCode());
-            if (agent.getChatHistoryConf() == null) {
-                agent.setChatHistoryConf(Constant.ChatHistoryConfEnum.RECORD_TEXT_AUDIO.getCode());
-            }
+        }
+        if (agent.getChatHistoryConf() == null) {
+            agent.setChatHistoryConf(Constant.ChatHistoryConfEnum.RECORD_TEXT_AUDIO.getCode());
         }
 
         // 查询上下文源配置
@@ -132,7 +138,8 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
         if (StringUtils.isNotBlank(keyword)) {
             if ("mac".equals(searchType)) {
                 // 按MAC地址搜索：先搜索设备，再获取对应的智能体
-                List<DeviceEntity> devices = Optional.ofNullable(deviceService.searchDevicesByMacAddress(keyword, userId)).orElseGet(ArrayList::new);
+                List<DeviceEntity> devices = Optional
+                        .ofNullable(deviceService.searchDevicesByMacAddress(keyword, userId)).orElseGet(ArrayList::new);
                 // 获取设备对应的智能体ID列表
                 List<String> agentIds = devices.stream()
                         .map(DeviceEntity::getAgentId)

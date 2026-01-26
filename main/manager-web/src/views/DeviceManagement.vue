@@ -64,7 +64,7 @@
                   <el-button size="mini" type="text" @click="handleUnbind(scope.row.device_id)">
                     {{ $t('device.unbind') }}
                   </el-button>
-                  <el-button v-if="isGenerate(scope.row)" size="mini" type="text" @click="handleGenertor">
+                  <el-button v-if="isGenerate(scope.row)" size="mini" type="text" @click="handleGenertor(scope.row)">
                     {{ $t('device.deviceThemeGeneration') }}
                   </el-button>
                 </template>
@@ -337,10 +337,10 @@ export default {
         });
       });
     },
-    handleGenertor() {
+    handleGenertor(row) {
       const pathname = window.location.pathname;
       const basePath = pathname.split('/').slice(0, -1).join('/');
-      const url = `${window.location.origin}${basePath}/generator/`;
+      const url = `${window.location.origin}${basePath}/generator/?deviceId=${row.device_id}`;
       sessionStorage.setItem('devicePath', window.location.href);
       window.location.href = url;
     },

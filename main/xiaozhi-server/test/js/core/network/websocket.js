@@ -1,11 +1,11 @@
 // WebSocket消息处理模块
-import { log } from '../../utils/logger.js';
-import { webSocketConnect } from './ota-connector.js';
 import { getConfig, saveConnectionUrls } from '../../config/manager.js';
+import { uiController } from '../../ui/controller.js';
+import { log } from '../../utils/logger.js';
 import { getAudioPlayer } from '../audio/player.js';
 import { getAudioRecorder } from '../audio/recorder.js';
-import { getMcpTools, executeMcpTool, setWebSocket as setMcpWebSocket } from '../mcp/tools.js';
-import { uiController } from '../../ui/controller.js'
+import { executeMcpTool, getMcpTools, setWebSocket as setMcpWebSocket } from '../mcp/tools.js';
+import { webSocketConnect } from './ota-connector.js';
 
 // WebSocket处理器类
 export class WebSocketHandler {
@@ -101,10 +101,10 @@ export class WebSocketHandler {
                 }
 
                 // 触发Live2D情绪动作
-            if (message.emotion) {
-                console.log(`收到情绪消息: emotion=${message.emotion}, text=${message.text}`);
-                this.triggerLive2DEmotionAction(message.emotion);
-            }
+                if (message.emotion) {
+                    console.log(`收到情绪消息: emotion=${message.emotion}, text=${message.text}`);
+                    this.triggerLive2DEmotionAction(message.emotion);
+                }
             }
 
             // 只有当文本不仅仅是表情时，才添加到对话中
@@ -273,6 +273,26 @@ export class WebSocketHandler {
             this.websocket.send(replyMessage);
         } else if (payload.method === 'initialize') {
             log(`收到工具初始化请求: ${JSON.stringify(payload.params)}`, 'info');
+            const replyMessage = JSON.stringify({
+                "session_id": message.session_id || "",
+                "type": "mcp",
+                "payload": {
+                    "jsonrpc": "2.0",
+                    "id": payload.id,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {}
+                        },
+                        "serverInfo": {
+                            "name": "xiaozhi-web-test",
+                            "version": "2.1.0"
+                        }
+                    }
+                }
+            });
+            log(`回复初始化响应`, 'info');
+            this.websocket.send(replyMessage);
         } else {
             log(`未知的MCP方法: ${payload.method}`, 'warning');
         }
