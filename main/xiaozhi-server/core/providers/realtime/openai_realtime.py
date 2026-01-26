@@ -25,6 +25,8 @@ import websockets
 import opuslib_next
 from typing import Dict, Any, Optional
 from config.logger import setup_logging
+from core.utils.dialogue import Message
+from core.handle.reportHandle import enqueue_asr_report, enqueue_tts_report
 
 TAG = __name__
 logger = setup_logging()
@@ -269,8 +271,18 @@ class OpenAIRealtimeProvider:
                 except asyncio.TimeoutError:
                     # Check if we've been idle too long
                     idle_time = time.time() - self.last_activity_time
-                    if idle_time > 60:  # 60 seconds of inactivity
-                        logger.bind(tag=TAG).warning(f"OpenAI connection idle for {idle_time:.1f}s")
+
+                    # Close connection after 5 minutes of inactivity to save resources
+                    MAX_IDLE_TIME = 300  # 5 minutes
+                    if idle_time > MAX_IDLE_TIME:
+                        logger.bind(tag=TAG).warning(
+                            f"OpenAI connection idle for {idle_time:.1f}s (max: {MAX_IDLE_TIME}s) - closing connection"
+                        )
+                        break
+
+                    # Log warning after 60 seconds of inactivity
+                    if idle_time > 60:
+                        logger.bind(tag=TAG).debug(f"OpenAI connection idle for {idle_time:.1f}s")
 
                     # Send ping to keep connection alive
                     try:
@@ -352,6 +364,13 @@ class OpenAIRealtimeProvider:
             transcript = event.get("transcript", "")
             logger.bind(tag=TAG).info(f"User said: {transcript}")
 
+            # Add to dialogue history (memory)
+            self.conn.dialogue.put(Message(role="user", content=transcript))
+
+            # Report to chat history (for web UI display)
+            # Note: No audio available in Realtime mode, pass empty list
+            enqueue_asr_report(self.conn, transcript, [])
+
         # Response events
         elif event_type == "response.created":
             import time
@@ -401,6 +420,14 @@ class OpenAIRealtimeProvider:
         elif event_type == "response.audio_transcript.done":
             transcript = event.get("transcript", "")
             logger.bind(tag=TAG).info(f"Bot said: {transcript}")
+
+            # Add to dialogue history (memory)
+            self.conn.dialogue.put(Message(role="assistant", content=transcript))
+
+            # Report to chat history (for web UI display)
+            # Note: No audio available in Realtime mode, pass empty list
+            enqueue_tts_report(self.conn, transcript, [])
+
             # Send transcription to ESP32 for display
             await self._send_transcription_to_client(transcript)
 
