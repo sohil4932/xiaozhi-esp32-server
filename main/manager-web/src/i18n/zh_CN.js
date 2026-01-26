@@ -762,6 +762,7 @@ export default {
   'roleConfig.memoryHis': '记忆',
   'roleConfig.memory': '记忆模式',
   'roleConfig.tts': '语音合成(TTS)',
+  'roleConfig.realtime': '实时API(Realtime)',
   'roleConfig.voiceType': '声音音色(Voice)',
   'roleConfig.pleaseEnterContent': '请输入内容',
   'roleConfig.pleaseEnterLangCode': '请输入语言编码，如：zh_CN',
@@ -830,6 +831,7 @@ export default {
   'modelConfig.tts': '语音合成',
   'modelConfig.memory': '记忆',
   'modelConfig.rag': '知识库',
+  'modelConfig.realtime': '实时API',
   'modelConfig.modelId': '模型ID',
   'modelConfig.modelName': '模型名称',
   'modelConfig.provider': '接口类型',
@@ -986,6 +988,7 @@ export default {
   'providerManagement.modelType.VAD': '语音活动检测',
   'providerManagement.modelType.Plugin': '插件工具',
   'providerManagement.modelType.RAG': '知识库',
+  'providerManagement.modelType.Realtime': '实时API',
 
   // Provider Dialog 翻译
   'providerDialog.category': '类别',

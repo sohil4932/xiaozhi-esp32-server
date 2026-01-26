@@ -113,6 +113,10 @@ class ConnectionHandler:
         self.memory = _memory
         self.intent = _intent
 
+        # Realtime API provider (替代ASR+LLM+TTS)
+        self.realtime_provider = None
+        self.use_realtime = False
+
         # 为每个连接单独管理声纹识别
         self.voiceprint_provider = None
 
@@ -589,7 +593,8 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).error(f"异步获取差异化配置失败: {e}")
             private_config = {}
 
-        init_llm, init_tts, init_memory, init_intent = (
+        init_llm, init_tts, init_memory, init_intent, init_realtime = (
+            False,
             False,
             False,
             False,
@@ -646,6 +651,13 @@ class ConnectionHandler:
                 self.config["Intent"][self.config["selected_module"]["Intent"]][
                     "functions"
                 ] = plugin_from_server.keys()
+        if private_config.get("Realtime", None) is not None:
+            init_realtime = True
+            self.config["Realtime"] = private_config["Realtime"]
+            self.config["selected_module"]["Realtime"] = private_config["selected_module"][
+                "Realtime"
+            ]
+            self.logger.bind(tag=TAG).info("检测到Realtime配置 - 将使用Realtime API模式")
         if private_config.get("prompt", None) is not None:
             self.config["prompt"] = private_config["prompt"]
         # 获取声纹信息
@@ -675,6 +687,7 @@ class ConnectionHandler:
                 init_tts,
                 init_memory,
                 init_intent,
+                init_realtime,
             )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"初始化组件失败: {e}")
@@ -691,6 +704,25 @@ class ConnectionHandler:
             self.intent = modules["intent"]
         if modules.get("memory", None) is not None:
             self.memory = modules["memory"]
+
+        # Initialize Realtime provider if configured
+        if init_realtime and "Realtime" in self.config.get("selected_module", {}):
+            self.use_realtime = True
+            try:
+                from core.utils import realtime
+                select_realtime_module = self.config["selected_module"]["Realtime"]
+                realtime_config = self.config["Realtime"][select_realtime_module]
+                realtime_type = realtime_config.get("type", "openai_realtime")
+
+                self.realtime_provider = realtime.create_instance(
+                    realtime_type,
+                    realtime_config,
+                    self
+                )
+                self.logger.bind(tag=TAG).success(f"Realtime provider initialized: {select_realtime_module}")
+            except Exception as e:
+                self.logger.bind(tag=TAG).error(f"Failed to initialize Realtime provider: {e}")
+                self.use_realtime = False
 
     def _initialize_memory(self):
         if self.memory is None:
@@ -1284,3 +1316,37 @@ class ConnectionHandler:
                 tool_calls_list[tool_index]["name"] = tool_call.function.name
             if tool_call.function.arguments:
                 tool_calls_list[tool_index]["arguments"] += tool_call.function.arguments
+
+    async def send_audio_to_client(self, opus_packet):
+        """Send audio packet to client with MQTT gateway header format
+
+        Used by Realtime API provider to send audio responses directly.
+
+        Args:
+            opus_packet: Opus-encoded audio packet
+        """
+        try:
+            # Generate timestamp and sequence (use only lower 32 bits to fit in 4 bytes)
+            timestamp = int(time.time() * 1000) & 0xFFFFFFFF
+
+            # Initialize sequence if not exists
+            if not hasattr(self, '_audio_sequence'):
+                self._audio_sequence = 0
+
+            sequence = self._audio_sequence
+            self._audio_sequence += 1
+
+            # Build 16-byte header for MQTT gateway format
+            header = bytearray(16)
+            header[0] = 1  # type
+            header[2:4] = len(opus_packet).to_bytes(2, "big")  # payload length
+            header[4:8] = sequence.to_bytes(4, "big")  # sequence
+            header[8:12] = timestamp.to_bytes(4, "big")  # timestamp
+            header[12:16] = len(opus_packet).to_bytes(4, "big")  # opus length
+
+            # Send complete packet
+            complete_packet = bytes(header) + opus_packet
+            await self.websocket.send(complete_packet)
+
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"Error sending audio to client: {e}")

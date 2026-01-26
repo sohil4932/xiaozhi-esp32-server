@@ -15,17 +15,32 @@ def initialize_modules(
     init_tts=False,
     init_memory=False,
     init_intent=False,
+    init_realtime=False,
 ) -> Dict[str, Any]:
     """
     初始化所有模块组件
 
     Args:
         config: 配置字典
+        init_realtime: 是否初始化Realtime模块
 
     Returns:
         Dict[str, Any]: 包含所有初始化后的模块的字典
     """
     modules = {}
+
+    # 检查是否使用Realtime模式（Realtime模式会替代ASR+LLM+TTS）
+    use_realtime = (
+        "Realtime" in config.get("selected_module", {})
+        and config["selected_module"]["Realtime"]
+        and init_realtime
+    )
+
+    if use_realtime:
+        logger.bind(tag=TAG).warning("检测到Realtime模式 - 将跳过ASR、LLM、TTS初始化")
+        init_asr = False
+        init_llm = False
+        init_tts = False
 
     # 初始化TTS模块
     if init_tts:
