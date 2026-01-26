@@ -88,6 +88,7 @@ class OpenAIRealtimeProvider:
         self.session_id = None
         self.is_connected = False
         self.is_processing = False
+        self.is_music_playing = False  # Flag to pause audio processing during music playback
 
         # Tasks
         self.receive_task = None
@@ -604,7 +605,7 @@ class OpenAIRealtimeProvider:
                 )
 
                 # Send result back to Realtime API
-                await self._send_function_call_result(call_id, result)
+                await self._send_function_call_result(call_id, result, function_name)
             else:
                 logger.bind(tag=TAG).error("No function handler available")
                 await self._send_function_call_error(call_id, "Function handler not available")
@@ -613,7 +614,7 @@ class OpenAIRealtimeProvider:
             logger.bind(tag=TAG).error(f"Error executing function call: {e}")
             await self._send_function_call_error(call_id, str(e))
 
-    async def _send_function_call_result(self, call_id: str, result):
+    async def _send_function_call_result(self, call_id: str, result, function_name: str = ""):
         """Send function call result back to Realtime API"""
         try:
             # Format result for Realtime API
@@ -637,10 +638,14 @@ class OpenAIRealtimeProvider:
 
             await self.ws.send(json.dumps(message))
 
-            # Trigger response generation
-            await self.ws.send(json.dumps({"type": "response.create"}))
-
-            logger.bind(tag=TAG).info(f"Function result sent | Call ID: {call_id}")
+            # For play_music, don't trigger response - music will play instead
+            # Response will auto-trigger when user speaks again after music
+            if function_name == "play_music":
+                logger.bind(tag=TAG).info(f"Function result sent (no response trigger for music) | Call ID: {call_id}")
+            else:
+                # Trigger response generation for other functions
+                await self.ws.send(json.dumps({"type": "response.create"}))
+                logger.bind(tag=TAG).info(f"Function result sent | Call ID: {call_id}")
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error sending function result: {e}")
@@ -671,6 +676,10 @@ class OpenAIRealtimeProvider:
         try:
             if not self.is_connected or not self.ws:
                 logger.bind(tag=TAG).warning(f"Cannot receive audio - connected: {self.is_connected}, ws: {self.ws is not None}")
+                return
+
+            # Skip audio processing if music is playing
+            if self.is_music_playing:
                 return
 
             # Update activity timestamp - we're actively streaming
