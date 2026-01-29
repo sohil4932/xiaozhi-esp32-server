@@ -31,16 +31,23 @@ class MemoryProvider(MemoryProviderBase):
     async def save_memory(self, msgs, session_id=None):
         if not self.use_mem0:
             return None
-        if len(msgs) < 2:
+        if not msgs or len(msgs) < 2:
             return None
 
         try:
             # Format the content as a message list for mem0
+            # Filter out messages with None values and non-system messages
             messages = [
                 {"role": message.role, "content": message.content}
                 for message in msgs
-                if message.role != "system"
+                if message.role and message.role != "system" and message.content
             ]
+
+            # Only save if we have valid messages
+            if not messages:
+                logger.bind(tag=TAG).debug("No valid messages to save")
+                return None
+
             result = self.client.add(messages, user_id=self.role_id)
             logger.bind(tag=TAG).debug(f"Save memory result: {result}")
         except Exception as e:

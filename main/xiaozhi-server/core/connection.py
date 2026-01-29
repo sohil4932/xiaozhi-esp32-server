@@ -114,6 +114,10 @@ class ConnectionHandler:
         self.memory = _memory
         self.intent = _intent
 
+        # Realtime API provider (替代ASR+LLM+TTS)
+        self.realtime_provider = None
+        self.use_realtime = False
+
         # 为每个连接单独管理声纹识别
         self.voiceprint_provider = None
 
@@ -215,10 +219,11 @@ class ConnectionHandler:
             asyncio.create_task(self._background_initialize())
 
             try:
+                self.logger.bind(tag=TAG).info("开始监听WebSocket消息")
                 async for message in self.websocket:
                     await self._route_message(message)
-            except websockets.exceptions.ConnectionClosed:
-                self.logger.bind(tag=TAG).info("客户端断开连接")
+            except websockets.exceptions.ConnectionClosed as e:
+                self.logger.bind(tag=TAG).warning(f"WebSocket connection closed by client: code={e.code}, reason={e.reason}")
 
         except AuthenticationError as e:
             self.logger.bind(tag=TAG).error(f"Authentication failed: {str(e)}")
@@ -244,17 +249,27 @@ class ConnectionHandler:
         """保存记忆并关闭连接"""
         try:
             if self.memory:
+                # Make a thread-safe copy of the dialogue list before passing to background thread
+                with self.dialogue._lock:
+                    dialogue_snapshot = list(self.dialogue.dialogue)
+
                 # 使用线程池异步保存记忆
                 def save_memory_task():
                     try:
                         # 创建新事件循环（避免与主循环冲突）
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
-                        loop.run_until_complete(
-                            self.memory.save_memory(
-                                self.dialogue.dialogue, self.session_id
-                            )
+
+                        # Add timeout to prevent indefinite blocking
+                        # Pass the snapshot instead of the live list
+                        save_task = self.memory.save_memory(
+                            dialogue_snapshot, self.session_id
                         )
+                        loop.run_until_complete(
+                            asyncio.wait_for(save_task, timeout=30.0)
+                        )
+                    except asyncio.TimeoutError:
+                        self.logger.bind(tag=TAG).warning(f"保存记忆超时(30s) - 跳过")
                     except Exception as e:
                         self.logger.bind(tag=TAG).error(f"保存记忆失败: {e}")
                     finally:
@@ -594,7 +609,8 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).error(f"异步获取差异化配置失败: {e}")
             private_config = {}
 
-        init_llm, init_tts, init_memory, init_intent = (
+        init_llm, init_tts, init_memory, init_intent, init_realtime = (
+            False,
             False,
             False,
             False,
@@ -651,6 +667,13 @@ class ConnectionHandler:
                 self.config["Intent"][self.config["selected_module"]["Intent"]][
                     "functions"
                 ] = plugin_from_server.keys()
+        if private_config.get("Realtime", None) is not None:
+            init_realtime = True
+            self.config["Realtime"] = private_config["Realtime"]
+            self.config["selected_module"]["Realtime"] = private_config["selected_module"][
+                "Realtime"
+            ]
+            self.logger.bind(tag=TAG).info("检测到Realtime配置 - 将使用Realtime API模式")
         if private_config.get("prompt", None) is not None:
             self.config["prompt"] = private_config["prompt"]
         # 获取声纹信息
@@ -680,6 +703,7 @@ class ConnectionHandler:
                 init_tts,
                 init_memory,
                 init_intent,
+                init_realtime,
             )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"初始化组件失败: {e}")
@@ -696,6 +720,25 @@ class ConnectionHandler:
             self.intent = modules["intent"]
         if modules.get("memory", None) is not None:
             self.memory = modules["memory"]
+
+        # Initialize Realtime provider if configured
+        if init_realtime and "Realtime" in self.config.get("selected_module", {}):
+            self.use_realtime = True
+            try:
+                from core.utils import realtime
+                select_realtime_module = self.config["selected_module"]["Realtime"]
+                realtime_config = self.config["Realtime"][select_realtime_module]
+                realtime_type = realtime_config.get("type", "openai_realtime")
+
+                self.realtime_provider = realtime.create_instance(
+                    realtime_type,
+                    realtime_config,
+                    self
+                )
+                self.logger.bind(tag=TAG).success(f"Realtime provider initialized: {select_realtime_module}")
+            except Exception as e:
+                self.logger.bind(tag=TAG).error(f"Failed to initialize Realtime provider: {e}")
+                self.use_realtime = False
 
     def _initialize_memory(self):
         if self.memory is None:
@@ -1112,6 +1155,16 @@ class ConnectionHandler:
                     pass
                 self.timeout_task = None
 
+            # 清理 Realtime provider 资源 (if using Realtime mode)
+            if hasattr(self, "realtime_provider") and self.realtime_provider:
+                try:
+                    await self.realtime_provider.cleanup()
+                    self.logger.bind(tag=TAG).info("Realtime provider cleaned up")
+                except Exception as cleanup_error:
+                    self.logger.bind(tag=TAG).error(
+                        f"清理 Realtime provider 时出错: {cleanup_error}"
+                    )
+
             # 清理工具处理器资源
             if hasattr(self, "func_handler") and self.func_handler:
                 try:
@@ -1234,6 +1287,11 @@ class ConnectionHandler:
     async def _check_timeout(self):
         """检查连接超时"""
         try:
+            # Skip timeout check for Realtime mode - OpenAI handles keepalive
+            if self.use_realtime:
+                self.logger.bind(tag=TAG).info("Realtime mode - timeout check disabled")
+                return
+
             while not self.stop_event.is_set():
                 last_activity_time = self.last_activity_time
                 if self.need_bind:
@@ -1289,3 +1347,37 @@ class ConnectionHandler:
                 tool_calls_list[tool_index]["name"] = tool_call.function.name
             if tool_call.function.arguments:
                 tool_calls_list[tool_index]["arguments"] += tool_call.function.arguments
+
+    async def send_audio_to_client(self, opus_packet):
+        """Send audio packet to client with MQTT gateway header format
+
+        Used by Realtime API provider to send audio responses directly.
+
+        Args:
+            opus_packet: Opus-encoded audio packet
+        """
+        try:
+            # Generate timestamp and sequence (use only lower 32 bits to fit in 4 bytes)
+            timestamp = int(time.time() * 1000) & 0xFFFFFFFF
+
+            # Initialize sequence if not exists
+            if not hasattr(self, '_audio_sequence'):
+                self._audio_sequence = 0
+
+            sequence = self._audio_sequence
+            self._audio_sequence += 1
+
+            # Build 16-byte header for MQTT gateway format
+            header = bytearray(16)
+            header[0] = 1  # type
+            header[2:4] = len(opus_packet).to_bytes(2, "big")  # payload length
+            header[4:8] = sequence.to_bytes(4, "big")  # sequence
+            header[8:12] = timestamp.to_bytes(4, "big")  # timestamp
+            header[12:16] = len(opus_packet).to_bytes(4, "big")  # opus length
+
+            # Send complete packet
+            complete_packet = bytes(header) + opus_packet
+            await self.websocket.send(complete_packet)
+
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"Error sending audio to client: {e}")

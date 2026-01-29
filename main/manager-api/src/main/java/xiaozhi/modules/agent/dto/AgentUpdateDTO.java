@@ -47,6 +47,9 @@ public class AgentUpdateDTO implements Serializable {
     @Schema(description = "意图模型标识", example = "intent_model_02", nullable = true)
     private String intentModelId;
 
+    @Schema(description = "Realtime API模型标识", example = "realtime_model_02", nullable = true)
+    private String realtimeModelId;
+
     @Schema(description = "插件函数信息", nullable = true)
     private List<FunctionInfo> functions;
 

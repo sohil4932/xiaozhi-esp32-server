@@ -11,6 +11,19 @@ TAG = __name__
 
 
 async def handleAudioMessage(conn, audio):
+    # NEW: If Realtime mode - full-duplex continuous audio streaming
+    if conn.use_realtime and conn.realtime_provider:
+        try:
+            # Full-duplex mode: Audio streams continuously in both directions
+            # - ESP32 AEC handles hardware-level echo cancellation
+            # - OpenAI/Gemini turn detection handles interruptions
+            # - No server-side blocking needed
+            await conn.realtime_provider.receive_audio(audio)
+        except Exception as e:
+            conn.logger.bind(tag=TAG).error(f"Realtime audio handling error: {e}", exc_info=True)
+        return
+
+    # Normal ASR+LLM+TTS pipeline
     # 当前片段是否有人说话
     have_voice = conn.vad.is_vad(conn, audio)
     # 如果设备刚刚被唤醒，短暂忽略VAD检测
@@ -120,7 +133,7 @@ async def no_voice_close_connect(conn, have_voice):
                 return
             prompt = end_prompt.get("prompt")
             if not prompt:
-                prompt = "请你以```时间过得真快```未来头，用富有感情、依依不舍的话来结束这场对话吧。！"
+                prompt = "Time flies so fast! We had so much fun playing together! I really enjoyed our time, and I can't wait to see you again. Remember, I'm always here when you want to play, talk, or hear a story. Goodbye for now, sweet friend! Sending you a big hug!"
             await startToChat(conn, prompt)
 
 
