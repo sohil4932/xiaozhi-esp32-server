@@ -142,7 +142,8 @@ async def wakeupWordsResponse(conn):
         # 获取当前音色
         voice = getattr(conn.tts, "voice", "default")
 
-        wav_bytes = opus_datas_to_wav_bytes(tts_result, sample_rate=16000)
+        # 使用链接的sample_rate
+        wav_bytes = opus_datas_to_wav_bytes(tts_result, sample_rate=conn.sample_rate)
         file_path = wakeup_words_config.generate_file_path(voice)
         with open(file_path, "wb") as f:
             f.write(wav_bytes)

@@ -89,7 +89,8 @@ xiaozhi:
   transport: websocket
   audio_params:
     format: opus
-    sample_rate: 16000  # Standard 16kHz for ESP32 compatibility
+    # Opus支持的采样率范围为[8000, 12000, 16000, 24000, 48000]
+    sample_rate: 24000
     channels: 1
     frame_duration: 60
 
@@ -744,13 +745,31 @@ TTS:
     speaker: zh_female_wanwanxiaohe_moon_bigtts
     # 开启WebSocket连接复用，默认复用（注意：复用后设备处于聆听状态时空闲链接会占并发数）
     enable_ws_reuse: True
-    speech_rate: 0
-    loudness_rate: 0
-    pitch: 0
-    # 多情感音色参数，注意：当前仅部分音色支持设置情感。
-    # 相关音色列表：https://www.volcengine.com/docs/6561/1257544
-    emotion: "neutral"  # 情感类型，可选值为：neutral、happy、sad、angry、fearful、disgusted、surprised
-    emotion_scale: 4  # 情感强度，可选值为：1~5，默认值为4
+    # 相关参数文档：https://www.volcengine.com/docs/6561/1329505
+    # 音频输出配置（audio_params）- 用户可自定义添加火山引擎支持的任何音频参数
+    audio_params:
+      speech_rate: 0  # 语速(-50~100)
+      loudness_rate: 0  # 音量(-50~100)
+      # 多情感音色参数，注意：当前仅部分音色支持设置情感。
+      # 相关音色列表：https://www.volcengine.com/docs/6561/1257544
+      # emotion: "neutral"  # 情感类型（仅部分音色支持）：neutral、happy、sad、angry、fearful、disgusted、surprised
+      # emotion_scale: 4  # 情感强度(1~5)
+    # 高级文本处理配置（additions）- 用户可自定义添加火山引擎支持的任何高级参数
+    additions:
+      post_process:
+        pitch: 0  # 音高(-12~12)
+      # aigc_metadata: {}  # AIGC元数据配置
+      # cache_config: {}  # 缓存配置
+    # 混音控制配置（mix_speaker）- 多音色混合（仅 TTS 1.0）
+    # 混音功能主要适用于豆包语音合成模型1.0的音色，使用时需要将req_params.speaker设置为custom_mix_bigtts
+    # mix_speaker:
+    #   speakers:
+    #     - source_speaker: zh_male_bvlazysheep
+    #       mix_factor: 0.3
+    #     - source_speaker: BV120_streaming
+    #       mix_factor: 0.3
+    #     - source_speaker: zh_male_ahu_conversation_wvae_bigtts
+    #       mix_factor: 0.4
   CosyVoiceSiliconflow:
     type: siliconflow
     # 硅基流动TTS
@@ -867,7 +886,6 @@ TTS:
     #       - "处理/(chu3)(li3)"
     #       - "危险/dangerous"
     # audio_setting:
-    #     sample_rate: 24000
     #     bitrate: 128000
     #     format: "mp3"
     #     channel: 1
@@ -895,7 +913,6 @@ TTS:
 
     # 以下可不用设置，使用默认设置
     # format: wav
-    # sample_rate: 16000
     # volume: 50
     # speech_rate: 0
     # pitch_rate: 0
@@ -919,7 +936,6 @@ TTS:
     host: nls-gateway-cn-beijing.aliyuncs.com
     # 以下可不用设置，使用默认设置
     # format: pcm  # 音频格式：pcm、wav、mp3
-    # sample_rate: 16000  # 采样率：8000、16000、24000
     # volume: 50  # 音量：0-100
     # speech_rate: 0  # 语速：-500到500
     # pitch_rate: 0  # 语调：-500到500
@@ -1052,7 +1068,6 @@ TTS:
     protocol: websocket # protocol choices = ['websocket', 'http']
     url: ws://127.0.0.1:8092/paddlespeech/tts/streaming  # TTS 服务的 URL 地址，指向本地服务器 [websocket默认ws://127.0.0.1:8092/paddlespeech/tts/streaming，http默认http://127.0.0.1:8090/paddlespeech/tts]
     spk_id: 0  # 发音人 ID，0 通常表示默认的发音人
-    sample_rate: 24000  # 采样率 [websocket默认24000，http默认0 自动选择]
     speed: 1.0  # 语速，1.0 表示正常语速，>1 表示加快，<1 表示减慢
     volume: 1.0  # 音量，1.0 表示正常音量，>1 表示增大，<1 表示减小
     save_path:   # 保存路径
@@ -1076,7 +1091,6 @@ TTS:
     output_dir: tmp/
     # 以下可不用设置，使用默认设置
     # format: pcm  # 音频格式：pcm、wav、mp3、opus
-    # sample_rate: 24000  # 采样率：16000, 24000, 48000
     # volume: 50  # 音量：0-100
     # rate: 1  # 语速：0.5~2
     # pitch: 1  # 语调：0.5~2
@@ -1098,7 +1112,6 @@ TTS:
     # stop_split: 0  # 关闭服务端拆句 不关闭：0，关闭：1
     # remain: 0  # 是否保留原书面语的样子	保留:1, 不保留:0
     # format: raw  # 音频格式：raw(PCM), lame(MP3), speex, opus, opus-wb, opus-swb, speex-wb
-    # sample_rate: 24000  # 采样率：16000, 8000, 24000
     # volume: 50  # 音量：0-100
     # speed: 50  # 语速：0-100
     # pitch: 50  # 语调：0-100

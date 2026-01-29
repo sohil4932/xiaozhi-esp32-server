@@ -154,16 +154,29 @@ class TTSProvider(TTSProviderBase):
             self.voice = config.get("private_voice")
         else:
             self.voice = config.get("speaker")
-        speech_rate = config.get("speech_rate", "0")
-        loudness_rate = config.get("loudness_rate", "0")
-        pitch = config.get("pitch", "0")
-        self.speech_rate = int(speech_rate) if speech_rate else 0
-        self.loudness_rate = int(loudness_rate) if loudness_rate else 0
-        self.pitch = int(pitch) if pitch else 0
-        # 多情感音色参数
-        self.emotion = config.get("emotion", "neutral")  
-        emotion_scale = config.get("emotion_scale", "4")
-        self.emotion_scale = int(emotion_scale) if emotion_scale else 4
+
+        # 默认 audio_params 配置
+        default_audio_params = {
+            "speech_rate": 0,
+            "loudness_rate": 0
+        }
+
+        # 默认 additions 配置
+        default_additions = {
+            "aigc_metadata": {},
+            "cache_config": {},
+            "post_process": {
+                "pitch": 0
+            }
+        }
+
+        # 默认 mix_speaker 配置
+        default_mix_speaker = {}
+
+        # 合并用户配置
+        self.audio_params = {**default_audio_params, **config.get("audio_params", {})}
+        self.additions = {**default_additions, **config.get("additions", {})}
+        self.mix_speaker = {**default_mix_speaker, **config.get("mix_speaker", {})}
 
         self.ws_url = config.get("ws_url")
         self.authorization = config.get("authorization")
@@ -171,9 +184,7 @@ class TTSProvider(TTSProviderBase):
         enable_ws_reuse_value = config.get("enable_ws_reuse", True)
         self.enable_ws_reuse = False if str(enable_ws_reuse_value).lower() == 'false' else True
         self.tts_text = ""
-        self.opus_encoder = opus_encoder_utils.OpusEncoderUtils(
-            sample_rate=16000, channels=1, frame_size_ms=60
-        )
+
         model_key_msg = check_model_key("TTS", self.access_token)
         if model_key_msg:
             logger.bind(tag=TAG).error(model_key_msg)
@@ -181,6 +192,8 @@ class TTSProvider(TTSProviderBase):
     async def open_audio_channels(self, conn):
         try:
             await super().open_audio_channels(conn)
+            # 更新 audio_params 中的采样率为实际的 conn.sample_rate
+            self.audio_params["sample_rate"] = conn.sample_rate
         except Exception as e:
             logger.bind(tag=TAG).error(f"Failed to open audio channels: {str(e)}")
             self.ws = None
@@ -646,20 +659,18 @@ class TTSProvider(TTSProviderBase):
         text="",
         speaker="",
         audio_format="pcm",
-        audio_sample_rate=16000,
     ):
-        audio_params = {
-            "format": audio_format,
-            "sample_rate": audio_sample_rate,
-            "speech_rate": self.speech_rate,
-            "loudness_rate": self.loudness_rate
+        # 构建 req_params
+        req_params = {
+            "text": text,
+            "speaker": speaker,
+            "audio_params": {**self.audio_params, "format": audio_format},
+            "additions": json.dumps(self.additions)
         }
-
-        # 如果是多情感音色,添加情感参数
-        if '_emo_' in self.voice:
-            if self.emotion:
-                audio_params["emotion"] = self.emotion
-                audio_params["emotion_scale"] = self.emotion_scale
+        
+        # 如果有 mix_speaker 配置，添加到 req_params
+        if self.mix_speaker:
+            req_params["mix_speaker"] = self.mix_speaker
 
         return str.encode(
             json.dumps(
@@ -667,17 +678,7 @@ class TTSProvider(TTSProviderBase):
                     "user": {"uid": uid},
                     "event": event,
                     "namespace": "BidirectionalTTS",
-                    "req_params": {
-                        "text": text,
-                        "speaker": speaker,
-                        "audio_params": audio_params,
-                        "additions": json.dumps({
-                            "post_process": {
-                                "pitch": self.pitch
-                            }
-                        })
-                    },
-
+                    "req_params": req_params
                 }
             )
         )

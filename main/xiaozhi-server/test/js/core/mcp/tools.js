@@ -1,4 +1,4 @@
-import { log } from '../../utils/logger.js';
+import { log } from '../../utils/logger.js?v=0127';
 
 // ==========================================
 // MCP 工具管理逻辑
@@ -24,7 +24,6 @@ export function setWebSocket(ws) {
 export async function initMcpTools() {
     // 加载默认工具数据
     const defaultMcpTools = await fetch("js/config/default-mcp-tools.json").then(res => res.json());
-
     const savedTools = localStorage.getItem('mcpTools');
     if (savedTools) {
         try {
@@ -36,9 +35,11 @@ export async function initMcpTools() {
     } else {
         mcpTools = [...defaultMcpTools];
     }
-
     renderMcpTools();
-    setupMcpEventListeners();
+    // Only setup event listeners if DOM elements exist
+    if (document.getElementById('toggleMcpTools')) {
+        setupMcpEventListeners();
+    }
 }
 
 /**
@@ -47,21 +48,20 @@ export async function initMcpTools() {
 function renderMcpTools() {
     const container = document.getElementById('mcpToolsContainer');
     const countSpan = document.getElementById('mcpToolsCount');
-
+    if (!container) {
+        return; // Container not found, skip rendering
+    }
     if (countSpan) {
         countSpan.textContent = `${mcpTools.length} 个工具`;
     }
-
     if (mcpTools.length === 0) {
         container.innerHTML = '<div style="text-align: center; padding: 30px; color: #999;">暂无工具，点击下方按钮添加新工具</div>';
         return;
     }
-
     container.innerHTML = mcpTools.map((tool, index) => {
         const paramCount = tool.inputSchema.properties ? Object.keys(tool.inputSchema.properties).length : 0;
         const requiredCount = tool.inputSchema.required ? tool.inputSchema.required.length : 0;
         const hasMockResponse = tool.mockResponse && Object.keys(tool.mockResponse).length > 0;
-
         return `
             <div class="mcp-tool-card">
                 <div class="mcp-tool-header">
@@ -96,12 +96,13 @@ function renderMcpTools() {
  */
 function renderMcpProperties() {
     const container = document.getElementById('mcpPropertiesContainer');
-
+    if (!container) {
+        return; // Container not found, skip rendering
+    }
     if (mcpProperties.length === 0) {
         container.innerHTML = '<div style="text-align: center; padding: 20px; color: #999; font-size: 14px;">暂无参数，点击下方按钮添加参数</div>';
         return;
     }
-
     container.innerHTML = mcpProperties.map((prop, index) => `
         <div class="mcp-property-item">
             <div class="mcp-property-header">
@@ -161,12 +162,7 @@ function renderMcpProperties() {
  * 添加参数
  */
 function addMcpProperty() {
-    mcpProperties.push({
-        name: `param_${mcpProperties.length + 1}`,
-        type: 'string',
-        required: false,
-        description: ''
-    });
+    mcpProperties.push({ name: `param_${mcpProperties.length + 1}`, type: 'string', required: false, description: '' });
     renderMcpProperties();
 }
 
@@ -182,9 +178,7 @@ function updateMcpProperty(index, field, value) {
             return;
         }
     }
-
     mcpProperties[index][field] = value;
-
     if (field === 'type' && value !== 'integer' && value !== 'number') {
         delete mcpProperties[index].minimum;
         delete mcpProperties[index].maximum;
@@ -212,25 +206,24 @@ function setupMcpEventListeners() {
     const cancelBtn = document.getElementById('cancelMcpBtn');
     const form = document.getElementById('mcpToolForm');
     const addPropertyBtn = document.getElementById('addMcpPropertyBtn');
-
+    // Return early if required elements don't exist (e.g., in test environment)
+    if (!toggleBtn || !panel || !addBtn || !modal || !closeBtn || !cancelBtn || !form || !addPropertyBtn) {
+        return;
+    }
     toggleBtn.addEventListener('click', () => {
         const isExpanded = panel.classList.contains('expanded');
         panel.classList.toggle('expanded');
-        toggleBtn.textContent = isExpanded ? '展开' : '收起';
+        toggleBtn.textContent = isExpanded ? '收起' : '展开';
     });
-    
     // 确保面板默认展开
     panel.classList.add('expanded');
-
     addBtn.addEventListener('click', () => openMcpModal());
     closeBtn.addEventListener('click', closeMcpModal);
     cancelBtn.addEventListener('click', closeMcpModal);
     addPropertyBtn.addEventListener('click', addMcpProperty);
-
     modal.addEventListener('click', (e) => {
         if (e.target === modal) closeMcpModal();
     });
-
     form.addEventListener('submit', handleMcpSubmit);
 }
 
@@ -243,18 +236,15 @@ function openMcpModal(index = null) {
         alert('WebSocket 已连接，无法编辑工具');
         return;
     }
-
     mcpEditingIndex = index;
     const errorContainer = document.getElementById('mcpErrorContainer');
     errorContainer.innerHTML = '';
-
     if (index !== null) {
         document.getElementById('mcpModalTitle').textContent = '编辑工具';
         const tool = mcpTools[index];
         document.getElementById('mcpToolName').value = tool.name;
         document.getElementById('mcpToolDescription').value = tool.description;
         document.getElementById('mcpMockResponse').value = tool.mockResponse ? JSON.stringify(tool.mockResponse, null, 2) : '';
-
         mcpProperties = [];
         const schema = tool.inputSchema;
         if (schema.properties) {
@@ -275,7 +265,6 @@ function openMcpModal(index = null) {
         document.getElementById('mcpToolForm').reset();
         mcpProperties = [];
     }
-
     renderMcpProperties();
     document.getElementById('mcpToolModal').style.display = 'block';
 }
@@ -298,21 +287,15 @@ function handleMcpSubmit(e) {
     e.preventDefault();
     const errorContainer = document.getElementById('mcpErrorContainer');
     errorContainer.innerHTML = '';
-
     const name = document.getElementById('mcpToolName').value.trim();
     const description = document.getElementById('mcpToolDescription').value.trim();
     const mockResponseText = document.getElementById('mcpMockResponse').value.trim();
-
     // 检查名称重复
-    const isDuplicate = mcpTools.some((tool, index) =>
-        tool.name === name && index !== mcpEditingIndex
-    );
-
+    const isDuplicate = mcpTools.some((tool, index) => tool.name === name && index !== mcpEditingIndex);
     if (isDuplicate) {
         showMcpError('工具名称已存在，请使用不同的名称');
         return;
     }
-
     // 解析模拟返回结果
     let mockResponse = null;
     if (mockResponseText) {
@@ -323,21 +306,13 @@ function handleMcpSubmit(e) {
             return;
         }
     }
-
     // 构建 inputSchema
-    const inputSchema = {
-        type: "object",
-        properties: {},
-        required: []
-    };
-
+    const inputSchema = { type: "object", properties: {}, required: [] };
     mcpProperties.forEach(prop => {
         const propSchema = { type: prop.type };
-
         if (prop.description) {
             propSchema.description = prop.description;
         }
-
         if ((prop.type === 'integer' || prop.type === 'number')) {
             if (prop.minimum !== undefined && prop.minimum !== '') {
                 propSchema.minimum = prop.minimum;
@@ -346,20 +321,15 @@ function handleMcpSubmit(e) {
                 propSchema.maximum = prop.maximum;
             }
         }
-
         inputSchema.properties[prop.name] = propSchema;
-
         if (prop.required) {
             inputSchema.required.push(prop.name);
         }
     });
-
     if (inputSchema.required.length === 0) {
         delete inputSchema.required;
     }
-
     const tool = { name, description, inputSchema, mockResponse };
-
     if (mcpEditingIndex !== null) {
         mcpTools[mcpEditingIndex] = tool;
         log(`已更新工具: ${name}`, 'success');
@@ -367,7 +337,6 @@ function handleMcpSubmit(e) {
         mcpTools.push(tool);
         log(`已添加工具: ${name}`, 'success');
     }
-
     saveMcpTools();
     renderMcpTools();
     closeMcpModal();
@@ -417,11 +386,7 @@ function saveMcpTools() {
  * 获取工具列表
  */
 export function getMcpTools() {
-    return mcpTools.map(tool => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema
-    }));
+    return mcpTools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }));
 }
 
 /**
@@ -429,20 +394,14 @@ export function getMcpTools() {
  */
 export function executeMcpTool(toolName, toolArgs) {
     const tool = mcpTools.find(t => t.name === toolName);
-
     if (!tool) {
         log(`未找到工具: ${toolName}`, 'error');
-        return {
-            success: false,
-            error: `未知工具: ${toolName}`
-        };
+        return { success: false, error: `未知工具: ${toolName}` };
     }
-
     // 如果有模拟返回结果，使用它
     if (tool.mockResponse) {
         // 替换模板变量
         let responseStr = JSON.stringify(tool.mockResponse);
-
         // 替换 ${paramName} 格式的变量
         if (toolArgs) {
             Object.keys(toolArgs).forEach(key => {
@@ -450,7 +409,6 @@ export function executeMcpTool(toolName, toolArgs) {
                 responseStr = responseStr.replace(regex, toolArgs[key]);
             });
         }
-
         try {
             const response = JSON.parse(responseStr);
             log(`工具 ${toolName} 执行成功，返回模拟结果: ${responseStr}`, 'success');
@@ -460,21 +418,10 @@ export function executeMcpTool(toolName, toolArgs) {
             return tool.mockResponse;
         }
     }
-
     // 没有模拟返回结果，返回默认成功消息
     log(`工具 ${toolName} 执行成功，返回默认结果`, 'success');
-    return {
-        success: true,
-        message: `工具 ${toolName} 执行成功`,
-        tool: toolName,
-        arguments: toolArgs
-    };
+    return { success: true, message: `工具 ${toolName} 执行成功`, tool: toolName, arguments: toolArgs };
 }
 
 // 暴露全局方法供 HTML 内联事件调用
-window.mcpModule = {
-    updateMcpProperty,
-    deleteMcpProperty,
-    editMcpTool,
-    deleteMcpTool
-};
+window.mcpModule = { updateMcpProperty, deleteMcpProperty, editMcpTool, deleteMcpTool };

@@ -1,7 +1,7 @@
 // 音频播放模块
-import { log } from '../../utils/logger.js';
-import BlockingQueue from '../../utils/blocking-queue.js';
-import { createStreamingContext } from './stream-context.js';
+import BlockingQueue from '../../utils/blocking-queue.js?v=0127';
+import { log } from '../../utils/logger.js?v=0127';
+import { createStreamingContext } from './stream-context.js?v=0127';
 
 // 音频播放器类
 export class AudioPlayer {

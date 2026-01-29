@@ -1,10 +1,10 @@
-// UI控制模块
-import { loadConfig, saveConfig } from '../config/manager.js';
-import { getAudioRecorder } from '../core/audio/recorder.js';
-import { getWebSocketHandler } from '../core/network/websocket.js';
-import { getAudioPlayer } from '../core/audio/player.js';
+// UI controller module
+import { loadConfig, saveConfig } from '../config/manager.js?v=0127';
+import { getAudioPlayer } from '../core/audio/player.js?v=0127';
+import { getAudioRecorder } from '../core/audio/recorder.js?v=0127';
+import { getWebSocketHandler } from '../core/network/websocket.js?v=0127';
 
-// UI控制器类
+// UI controller class
 class UIController {
     constructor() {
         this.isEditing = false;
@@ -14,7 +14,7 @@ class UIController {
         this.currentBackgroundIndex = 0;
         this.backgroundImages = ['1.png', '2.png', '3.png'];
 
-        // 绑定方法
+        // Bind methods
         this.init = this.init.bind(this);
         this.initEventListeners = this.initEventListeners.bind(this);
         this.updateDialButton = this.updateDialButton.bind(this);
@@ -25,7 +25,7 @@ class UIController {
         this.switchTab = this.switchTab.bind(this);
     }
 
-    // 初始化
+    // Initialize
     init() {
         console.log('UIController init started');
 
@@ -35,7 +35,7 @@ class UIController {
             this.initVisualizer();
         }
 
-        // 检查连接按钮在初始化时是否存在
+        // Check if connect button exists during initialization
         const connectBtn = document.getElementById('connectBtn');
         console.log('connectBtn during init:', connectBtn);
 
@@ -43,20 +43,20 @@ class UIController {
         this.startAudioStatsMonitor();
         loadConfig();
 
-        // 设置录音器回调
+        // Register recording callback
         const audioRecorder = getAudioRecorder();
         audioRecorder.onRecordingStart = (seconds) => {
             this.updateRecordButtonState(true, seconds);
         };
 
-        // 初始化状态显示
+        // Initialize status display
         this.updateConnectionUI(false);
         this.updateDialButton(false);
 
         console.log('UIController init completed');
     }
 
-    // 初始化可视化器
+    // Initialize visualizer
     initVisualizer() {
         if (this.visualizerCanvas) {
             this.visualizerCanvas.width = this.visualizerCanvas.clientWidth;
@@ -66,9 +66,9 @@ class UIController {
         }
     }
 
-    // 初始化事件监听器
+    // Initialize event listeners
     initEventListeners() {
-        // 设置按钮
+        // Settings button
         const settingsBtn = document.getElementById('settingsBtn');
         if (settingsBtn) {
             settingsBtn.addEventListener('click', () => {
@@ -76,13 +76,13 @@ class UIController {
             });
         }
 
-        // 背景切换按钮
+        // Background switch button
         const backgroundBtn = document.getElementById('backgroundBtn');
         if (backgroundBtn) {
             backgroundBtn.addEventListener('click', this.switchBackground);
         }
 
-        // 拨号按钮
+        // Dial button
         const dialBtn = document.getElementById('dialBtn');
         if (dialBtn) {
             dialBtn.addEventListener('click', () => {
@@ -92,40 +92,40 @@ class UIController {
                 if (isConnected) {
                     wsHandler.disconnect();
                     this.updateDialButton(false);
-                    this.addChatMessage('已断开连接，期待下次再见~😉', false);
+                    this.addChatMessage('Disconnected, see you next time~😊', false);
                 } else {
-                    // 检查OTA地址是否已填写
+                    // Check if OTA URL is filled
                     const otaUrlInput = document.getElementById('otaUrl');
                     if (!otaUrlInput || !otaUrlInput.value.trim()) {
-                        // 如果OTA地址未填写，显示设置弹窗并切换到设备配置页
+                        // If OTA URL is not filled, show settings modal and switch to device tab
                         this.showModal('settingsModal');
                         this.switchTab('device');
-                        this.addChatMessage('请先填写OTA服务器地址', false);
+                        this.addChatMessage('Please fill in OTA server URL', false);
                         return;
                     }
 
-                    // 执行连接操作
+                    // Start connection process
                     this.handleConnect();
                 }
             });
         }
 
-        // 录音按钮
+        // Record button
         const recordBtn = document.getElementById('recordBtn');
         if (recordBtn) {
             recordBtn.addEventListener('click', () => {
                 const audioRecorder = getAudioRecorder();
                 if (audioRecorder.isRecording) {
                     audioRecorder.stop();
-                    // 停止录音时移除录音样式
+                    // Restore record button to normal state
                     recordBtn.classList.remove('recording');
                     recordBtn.querySelector('.btn-text').textContent = '录音';
                 } else {
-                    // 先更新按钮状态为录音中
+                    // Update button state to recording
                     recordBtn.classList.add('recording');
                     recordBtn.querySelector('.btn-text').textContent = '录音中';
 
-                    // 延迟开始录音，确保按钮状态已更新
+                    // Start recording, update button state after delay
                     setTimeout(() => {
                         audioRecorder.start();
                     }, 100);
@@ -133,7 +133,7 @@ class UIController {
             });
         }
 
-        // 消息输入框事件
+        // Chat input event listener
         const chatIpt = document.getElementById('chatIpt');
         if (chatIpt) {
             const wsHandler = getWebSocketHandler();
@@ -148,7 +148,7 @@ class UIController {
             });
         }
 
-        // 关闭按钮
+        // Close button
         const closeButtons = document.querySelectorAll('.close-btn');
         closeButtons.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -163,7 +163,7 @@ class UIController {
             });
         });
 
-        // 设置标签页切换
+        // Settings tab switch
         const tabBtns = document.querySelectorAll('.tab-btn');
         tabBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -171,7 +171,7 @@ class UIController {
             });
         });
 
-        // 点击模态框外部关闭
+        // Click modal background to close
         const modals = document.querySelectorAll('.modal');
         modals.forEach(modal => {
             modal.addEventListener('click', (e) => {
@@ -184,7 +184,7 @@ class UIController {
             });
         });
 
-        // 添加MCP工具按钮
+        // Add MCP tool button
         const addMCPToolBtn = document.getElementById('addMCPToolBtn');
         if (addMCPToolBtn) {
             addMCPToolBtn.addEventListener('click', (e) => {
@@ -193,10 +193,10 @@ class UIController {
             });
         }
 
-        // 连接按钮和取消按钮已被移除，功能已集成到拨号按钮中
+        // Connect button and send button are not removed, can be added to dial button later
     }
 
-    // 更新连接状态UI
+    // Update connection status UI
     updateConnectionUI(isConnected) {
         const connectionStatus = document.getElementById('connectionStatus');
         const statusDot = document.querySelector('.status-dot');
@@ -216,7 +216,7 @@ class UIController {
         }
     }
 
-    // 更新拨号按钮状态
+    // Update dial button state
     updateDialButton(isConnected) {
         const dialBtn = document.getElementById('dialBtn');
         const recordBtn = document.getElementById('recordBtn');
@@ -225,39 +225,44 @@ class UIController {
             if (isConnected) {
                 dialBtn.classList.add('dial-active');
                 dialBtn.querySelector('.btn-text').textContent = '挂断';
-                // 更新拨号按钮图标为挂断图标
+                // Update dial button icon to hang up icon
                 dialBtn.querySelector('svg').innerHTML = `
                     <path d="M12,9C10.4,9 9,10.4 9,12C9,13.6 10.4,15 12,15C13.6,15 15,13.6 15,12C15,10.4 13.6,9 12,9M12,17C9.2,17 7,14.8 7,12C7,9.2 9.2,7 12,7C14.8,7 17,9.2 17,12C17,14.8 14.8,17 12,17M12,4.5C7,4.5 2.7,7.6 1,12C2.7,16.4 7,19.5 12,19.5C17,19.5 21.3,16.4 23,12C21.3,7.6 17,4.5 12,4.5Z"/>
                 `;
             } else {
                 dialBtn.classList.remove('dial-active');
                 dialBtn.querySelector('.btn-text').textContent = '拨号';
-                // 恢复拨号按钮图标
+                // Restore dial button icon
                 dialBtn.querySelector('svg').innerHTML = `
                     <path d="M6.62,10.79C8.06,13.62 10.38,15.94 13.21,17.38L15.41,15.18C15.69,14.9 16.08,14.82 16.43,14.93C17.55,15.3 18.75,15.5 20,15.5A1,1 0 0,1 21,16.5V20A1,1 0 0,1 20,21A17,17 0 0,1 3,4A1,1 0 0,1 4,3H7.5A1,1 0 0,1 8.5,4C8.5,5.25 8.7,6.45 9.07,7.57C9.18,7.92 9.1,8.31 8.82,8.59L6.62,10.79Z"/>
                 `;
             }
         }
 
-        // 更新录音按钮状态
+        // Update record button state
         if (recordBtn) {
-            if (isConnected) {
+            const microphoneAvailable = window.microphoneAvailable !== false;
+            if (isConnected && microphoneAvailable) {
                 recordBtn.disabled = false;
                 recordBtn.title = '开始录音';
-                // 确保录音按钮恢复到正常状态
+                // Restore record button to normal state
                 recordBtn.querySelector('.btn-text').textContent = '录音';
                 recordBtn.classList.remove('recording');
             } else {
                 recordBtn.disabled = true;
-                recordBtn.title = '请先连接服务器';
-                // 确保录音按钮恢复到正常状态
+                if (!microphoneAvailable) {
+                    recordBtn.title = window.isHttpNonLocalhost ? '当前由于是http访问，无法录音，只能用文字交互' : '麦克风不可用';
+                } else {
+                    recordBtn.title = '请先连接服务器';
+                }
+                // Restore record button to normal state
                 recordBtn.querySelector('.btn-text').textContent = '录音';
                 recordBtn.classList.remove('recording');
             }
         }
     }
 
-    // 更新录音按钮状态
+    // Update record button state
     updateRecordButtonState(isRecording, seconds = 0) {
         const recordBtn = document.getElementById('recordBtn');
         if (recordBtn) {
@@ -268,11 +273,37 @@ class UIController {
                 recordBtn.querySelector('.btn-text').textContent = '录音';
                 recordBtn.classList.remove('recording');
             }
-            recordBtn.disabled = false;
+            // Only enable button when microphone is available
+            recordBtn.disabled = window.microphoneAvailable === false;
         }
     }
 
-    // 添加聊天消息
+    /**
+     * Update microphone availability state
+     * @param {boolean} isAvailable - Whether microphone is available
+     * @param {boolean} isHttpNonLocalhost - Whether it is HTTP non-localhost access
+     */
+    updateMicrophoneAvailability(isAvailable, isHttpNonLocalhost) {
+        const recordBtn = document.getElementById('recordBtn');
+        if (!recordBtn) return;
+        if (!isAvailable) {
+            // Disable record button
+            recordBtn.disabled = true;
+            // Update button text and title
+            recordBtn.querySelector('.btn-text').textContent = '录音';
+            recordBtn.title = isHttpNonLocalhost ? '当前由于是http访问，无法录音，只能用文字交互' : '麦克风不可用';
+
+        } else {
+            // If connected, enable record button
+            const wsHandler = getWebSocketHandler();
+            if (wsHandler && wsHandler.isConnected()) {
+                recordBtn.disabled = false;
+                recordBtn.title = '开始录音';
+            }
+        }
+    }
+
+    // Add chat message
     addChatMessage(content, isUser = false) {
         const chatStream = document.getElementById('chatStream');
         if (!chatStream) return;
@@ -282,11 +313,11 @@ class UIController {
         messageDiv.innerHTML = `<div class="message-bubble">${content}</div>`;
         chatStream.appendChild(messageDiv);
 
-        // 自动滚动到底部
+        // Scroll to bottom
         chatStream.scrollTop = chatStream.scrollHeight;
     }
 
-    // 切换背景
+    // Switch background
     switchBackground() {
         this.currentBackgroundIndex = (this.currentBackgroundIndex + 1) % this.backgroundImages.length;
         const backgroundContainer = document.querySelector('.background-container');
@@ -295,7 +326,7 @@ class UIController {
         }
     }
 
-    // 显示模态框
+    // Show modal
     showModal(modalId) {
         const modal = document.getElementById(modalId);
         if (modal) {
@@ -303,7 +334,7 @@ class UIController {
         }
     }
 
-    // 隐藏模态框
+    // Hide modal
     hideModal(modalId) {
         const modal = document.getElementById(modalId);
         if (modal) {
@@ -311,16 +342,16 @@ class UIController {
         }
     }
 
-    // 切换标签页
+    // Switch tab
     switchTab(tabName) {
-        // 移除所有标签页的active类
+        // Remove active class from all tabs
         const tabBtns = document.querySelectorAll('.tab-btn');
         const tabContents = document.querySelectorAll('.tab-content');
 
         tabBtns.forEach(btn => btn.classList.remove('active'));
         tabContents.forEach(content => content.classList.remove('active'));
 
-        // 激活选中的标签页
+        // Activate selected tab
         const activeTabBtn = document.querySelector(`[data-tab="${tabName}"]`);
         const activeTabContent = document.getElementById(`${tabName}Tab`);
 
@@ -330,24 +361,34 @@ class UIController {
         }
     }
 
-    // 连接成功后开始对话
+    // Start AI chat session after connection
     startAIChatSession() {
-        this.addChatMessage('连接成功，开始聊天吧~🙂', false);
-        // 开启录音
-        const recordBtn = document.getElementById('recordBtn');
-        if (recordBtn) {
-            recordBtn.click();
+        this.addChatMessage('连接成功，开始聊天吧~😊', false);
+        // Check microphone availability and show error messages if needed
+        if (!window.microphoneAvailable) {
+            if (window.isHttpNonLocalhost) {
+                this.addChatMessage('⚠️ 当前由于是http访问，无法录音，只能用文字交互', false);
+            } else {
+                this.addChatMessage('⚠️ 麦克风不可用，请检查权限设置，只能用文字交互', false);
+            }
+        }
+        // Start recording only if microphone is available
+        if (window.microphoneAvailable) {
+            const recordBtn = document.getElementById('recordBtn');
+            if (recordBtn) {
+                recordBtn.click();
+            }
         }
     }
 
-    // 处理连接按钮点击
+    // Handle connect button click
     async handleConnect() {
         console.log('handleConnect called');
 
-        // 确保切换到设备配置标签页
+        // Switch to device settings tab
         this.switchTab('device');
 
-        // 等待DOM更新
+        // Wait for DOM update
         await new Promise(resolve => setTimeout(resolve, 50));
 
         const otaUrlInput = document.getElementById('otaUrl');
@@ -362,7 +403,7 @@ class UIController {
         const otaUrl = otaUrlInput.value;
         console.log('otaUrl value:', otaUrl);
 
-        // 更新拨号按钮状态为连接中
+        // Update dial button state to connecting
         const dialBtn = document.getElementById('dialBtn');
         if (dialBtn) {
             dialBtn.classList.add('dial-active');
@@ -370,7 +411,7 @@ class UIController {
             dialBtn.disabled = true;
         }
 
-        // 显示连接中消息
+        // Show connecting message
         this.addChatMessage('正在连接服务器...', false);
 
         const chatIpt = document.getElementById('chatIpt');
@@ -380,41 +421,51 @@ class UIController {
 
         try {
 
-            // 获取WebSocket处理器
+            // Get WebSocket handler instance
             const wsHandler = getWebSocketHandler();
+
+            // Register connection state callback BEFORE connecting
+            wsHandler.onConnectionStateChange = (isConnected) => {
+                this.updateConnectionUI(isConnected);
+                this.updateDialButton(isConnected);
+            };
+
+            // Register chat message callback BEFORE connecting
+            wsHandler.onChatMessage = (text, isUser) => {
+                this.addChatMessage(text, isUser);
+            };
+
+            // Register record button state callback BEFORE connecting
+            wsHandler.onRecordButtonStateChange = (isRecording) => {
+                const recordBtn = document.getElementById('recordBtn');
+                if (recordBtn) {
+                    if (isRecording) {
+                        recordBtn.classList.add('recording');
+                        recordBtn.querySelector('.btn-text').textContent = '录音中';
+                    } else {
+                        recordBtn.classList.remove('recording');
+                        recordBtn.querySelector('.btn-text').textContent = '录音';
+                    }
+                }
+            };
+
             const isConnected = await wsHandler.connect();
 
             if (isConnected) {
+                // Check microphone availability (check again after connection)
+                const { checkMicrophoneAvailability } = await import('../core/audio/recorder.js?v=0127');
+                const micAvailable = await checkMicrophoneAvailability();
 
-                // 设置连接状态回调
-                wsHandler.onConnectionStateChange = (isConnected) => {
-                    this.updateConnectionUI(isConnected);
-                    this.updateDialButton(isConnected);
-                };
-
-                // 设置聊天消息回调
-                wsHandler.onChatMessage = (text, isUser) => {
-                    this.addChatMessage(text, isUser);
-                };
-
-                // 设置录音按钮状态回调
-                wsHandler.onRecordButtonStateChange = (isRecording) => {
-                    const recordBtn = document.getElementById('recordBtn');
-                    if (recordBtn) {
-                        if (isRecording) {
-                            recordBtn.classList.add('recording');
-                            recordBtn.querySelector('.btn-text').textContent = '录音中';
-                        } else {
-                            recordBtn.classList.remove('recording');
-                            recordBtn.querySelector('.btn-text').textContent = '录音';
-                        }
+                if (!micAvailable) {
+                    const isHttp = window.isHttpNonLocalhost;
+                    if (isHttp) {
+                        this.addChatMessage('⚠️ 当前由于是http访问，无法录音，只能用文字交互', false);
                     }
-                };
+                    // Update global state
+                    window.microphoneAvailable = false;
+                }
 
-                // 连接成功
-                this.addChatMessage('OTA连接成功，正在建立WebSocket连接...', false);
-
-                // 更新拨号按钮状态
+                // Update dial button state
                 const dialBtn = document.getElementById('dialBtn');
                 if (dialBtn) {
                     dialBtn.disabled = false;
@@ -434,14 +485,14 @@ class UIController {
                 name: error.name
             });
 
-            // 显示错误消息
+            // Show error message
             const errorMessage = error.message.includes('Cannot set properties of null')
-                ? '连接失败：请刷新页面重试'
+                ? '连接失败：请检查设备连接'
                 : `连接失败: ${error.message}`;
 
             this.addChatMessage(errorMessage, false);
 
-            // 恢复拨号按钮状态
+            // Restore dial button state
             const dialBtn = document.getElementById('dialBtn');
             if (dialBtn) {
                 dialBtn.disabled = false;
@@ -452,7 +503,7 @@ class UIController {
         }
     }
 
-    // 添加MCP工具
+    // Add MCP tool
     addMCPTool() {
         const mcpToolsList = document.getElementById('mcpToolsList');
         if (!mcpToolsList) return;
@@ -471,7 +522,7 @@ class UIController {
         mcpToolsList.appendChild(toolDiv);
     }
 
-    // 移除MCP工具
+    // Remove MCP tool
     removeMCPTool(toolId) {
         const toolElement = document.getElementById(toolId);
         if (toolElement) {
@@ -479,24 +530,24 @@ class UIController {
         }
     }
 
-    // 更新音频统计信息
+    // Update audio statistics display
     updateAudioStats() {
         const audioPlayer = getAudioPlayer();
         if (!audioPlayer) return;
 
         const stats = audioPlayer.getAudioStats();
-        // 这里可以添加音频统计的UI更新逻辑
+        // Here can add audio statistics UI update logic
     }
 
-    // 启动音频统计监控
+    // Start audio statistics monitor
     startAudioStatsMonitor() {
-        // 每100ms更新一次音频统计
+        // Update audio statistics every 100ms
         this.audioStatsTimer = setInterval(() => {
             this.updateAudioStats();
         }, 100);
     }
 
-    // 停止音频统计监控
+    // Stop audio statistics monitor
     stopAudioStatsMonitor() {
         if (this.audioStatsTimer) {
             clearInterval(this.audioStatsTimer);
@@ -504,7 +555,7 @@ class UIController {
         }
     }
 
-    // 绘制音频可视化效果
+    // Draw audio visualizer waveform
     drawVisualizer(dataArray) {
         if (!this.visualizerContext || !this.visualizerCanvas) return;
 
@@ -518,7 +569,7 @@ class UIController {
         for (let i = 0; i < dataArray.length; i++) {
             barHeight = dataArray[i] / 2;
 
-            // 创建渐变色：从紫色到蓝色到青色
+            // Create gradient color: from purple to blue to green
             const gradient = this.visualizerContext.createLinearGradient(0, 0, 0, this.visualizerCanvas.height);
             gradient.addColorStop(0, '#8e44ad');
             gradient.addColorStop(0.5, '#3498db');
@@ -530,21 +581,21 @@ class UIController {
         }
     }
 
-    // 更新会话状态UI
+    // Update session status UI
     updateSessionStatus(isSpeaking) {
-        // 这里可以添加会话状态的UI更新逻辑
-        // 例如：更新Live2D角色的表情或状态指示器
+        // Here can add session status UI update logic
+        // For example: update Live2D model's mouth movement status
     }
 
-    // 更新会话表情
+    // Update session emotion
     updateSessionEmotion(emoji) {
-        // 这里可以添加表情更新的逻辑
-        // 例如：在状态指示器中显示表情
+        // Here can add emotion update logic
+        // For example: display emoji in status indicator
     }
 }
 
-// 创建全局实例
+// Create singleton instance
 export const uiController = new UIController();
 
-// 导出类供其他模块使用
+// Export class for module usage
 export { UIController };

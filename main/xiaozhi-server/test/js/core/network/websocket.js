@@ -1,11 +1,11 @@
 // WebSocket消息处理模块
-import { getConfig, saveConnectionUrls } from '../../config/manager.js';
-import { uiController } from '../../ui/controller.js';
-import { log } from '../../utils/logger.js';
-import { getAudioPlayer } from '../audio/player.js';
-import { getAudioRecorder } from '../audio/recorder.js';
-import { executeMcpTool, getMcpTools, setWebSocket as setMcpWebSocket } from '../mcp/tools.js';
-import { webSocketConnect } from './ota-connector.js';
+import { getConfig, saveConnectionUrls } from '../../config/manager.js?v=0127';
+import { uiController } from '../../ui/controller.js?v=0127';
+import { log } from '../../utils/logger.js?v=0127';
+import { getAudioPlayer } from '../audio/player.js?v=0127';
+import { getAudioRecorder } from '../audio/recorder.js?v=0127';
+import { executeMcpTool, getMcpTools, setWebSocket as setMcpWebSocket } from '../mcp/tools.js?v=0127';
+import { webSocketConnect } from './ota-connector.js?v=0127';
 
 // WebSocket处理器类
 export class WebSocketHandler {
@@ -304,7 +304,6 @@ export class WebSocketHandler {
             let arrayBuffer;
             if (data instanceof ArrayBuffer) {
                 arrayBuffer = data;
-                log(`收到ArrayBuffer音频数据，大小: ${data.byteLength}字节`, 'debug');
             } else if (data instanceof Blob) {
                 arrayBuffer = await data.arrayBuffer();
                 log(`收到Blob音频数据，大小: ${arrayBuffer.byteLength}字节`, 'debug');
@@ -392,7 +391,7 @@ export class WebSocketHandler {
 
         this.websocket.onerror = (error) => {
             log(`WebSocket错误: ${error.message || '未知错误'}`, 'error');
-
+            uiController.addChatMessage(`⚠️ WebSocket错误: ${error.message || '未知错误'}`, false);
             if (this.onConnectionStateChange) {
                 this.onConnectionStateChange(false);
             }

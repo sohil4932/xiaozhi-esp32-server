@@ -41,8 +41,6 @@ class TTSProvider(TTSProviderBase):
 
         # 音频参数配置
         self.format = config.get("format", "pcm")
-        sample_rate = config.get("sample_rate", "24000")
-        self.sample_rate = int(sample_rate) if sample_rate else 24000
 
         volume = config.get("volume", "50")
         self.volume = int(volume) if volume else 50
@@ -59,11 +57,6 @@ class TTSProvider(TTSProviderBase):
             # "X-DashScope-WorkSpace": workspace, // 可选，阿里云百炼业务空间ID
             "X-DashScope-DataInspection": "enable",
         }
-
-        # 创建Opus编码器
-        self.opus_encoder = opus_encoder_utils.OpusEncoderUtils(
-            sample_rate=self.sample_rate, channels=1, frame_size_ms=60
-        )
 
     async def _ensure_connection(self):
         """确保WebSocket连接可用，支持60秒内连接复用"""
@@ -245,7 +238,7 @@ class TTSProvider(TTSProviderBase):
                         "text_type": "PlainText",
                         "voice": self.voice,
                         "format": self.format,
-                        "sample_rate": self.sample_rate,
+                        "sample_rate": self.conn.sample_rate,
                         "volume": self.volume,
                         "rate": self.rate,
                         "pitch": self.pitch,
@@ -429,7 +422,7 @@ class TTSProvider(TTSProviderBase):
                                 "text_type": "PlainText",
                                 "voice": self.voice,
                                 "format": self.format,
-                                "sample_rate": self.sample_rate,
+                                "sample_rate": self.conn.sample_rate,
                                 "volume": self.volume,
                                 "rate": self.rate,
                                 "pitch": self.pitch,

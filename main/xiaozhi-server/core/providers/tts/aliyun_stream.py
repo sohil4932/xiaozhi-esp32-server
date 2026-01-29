@@ -99,10 +99,6 @@ class TTSProvider(TTSProviderBase):
         self.format = config.get("format", "pcm")
         self.audio_file_type = config.get("format", "pcm")
 
-        # 采样率配置
-        sample_rate = config.get("sample_rate", "16000")
-        self.sample_rate = int(sample_rate) if sample_rate else 16000
-
         # 音色配置 - CosyVoice大模型音色
         if config.get("private_voice"):
             self.voice = config.get("private_voice")
@@ -133,11 +129,6 @@ class TTSProvider(TTSProviderBase):
 
         # 专属tts设置
         self.task_id = uuid.uuid4().hex
-
-        # 创建Opus编码器
-        self.opus_encoder = opus_encoder_utils.OpusEncoderUtils(
-            sample_rate=16000, channels=1, frame_size_ms=60
-        )
 
         # Token管理
         if self.access_key_id and self.access_key_secret:
@@ -344,7 +335,7 @@ class TTSProvider(TTSProviderBase):
                 "payload": {
                     "voice": self.voice,
                     "format": self.format,
-                    "sample_rate": self.sample_rate,
+                    "sample_rate": self.conn.sample_rate,
                     "volume": self.volume,
                     "speech_rate": self.speech_rate,
                     "pitch_rate": self.pitch_rate,
@@ -508,7 +499,7 @@ class TTSProvider(TTSProviderBase):
                         "payload": {
                             "voice": self.voice,
                             "format": self.format,
-                            "sample_rate": self.sample_rate,
+                            "sample_rate": self.conn.sample_rate,
                             "volume": self.volume,
                             "speech_rate": self.speech_rate,
                             "pitch_rate": self.pitch_rate,

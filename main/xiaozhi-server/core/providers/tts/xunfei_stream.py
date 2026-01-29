@@ -91,9 +91,6 @@ class TTSProvider(TTSProviderBase):
         # 音频编码配置
         self.format = config.get("format", "raw")
 
-        sample_rate = config.get("sample_rate", "24000")
-        self.sample_rate = int(sample_rate) if sample_rate else 24000
-
         # 口语化配置
         self.oral_level = config.get("oral_level", "mid")
 
@@ -112,11 +109,6 @@ class TTSProvider(TTSProviderBase):
 
         # 序列号管理
         self.text_seq = 0
-
-        # 创建Opus编码器
-        self.opus_encoder = opus_encoder_utils.OpusEncoderUtils(
-            sample_rate=self.sample_rate, channels=1, frame_size_ms=60
-        )
 
         # 验证必需参数
         if not all([self.app_id, self.api_key, self.api_secret]):
@@ -507,7 +499,7 @@ class TTSProvider(TTSProviderBase):
                     "rhy": 0,
                     "audio": {
                         "encoding": self.format,
-                        "sample_rate": self.sample_rate,
+                        "sample_rate": self.conn.sample_rate,
                         "channels": 1,
                         "bit_depth": 16,
                         "frame_size": 0
