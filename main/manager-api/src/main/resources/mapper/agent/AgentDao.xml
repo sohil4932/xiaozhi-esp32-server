@@ -18,6 +18,7 @@
         <result column="ttsVoiceId" property="ttsVoiceId"/>
         <result column="memModelId" property="memModelId"/>
         <result column="intentModelId" property="intentModelId"/>
+        <result column="realtimeModelId" property="realtimeModelId"/>
 
         <result column="functions" property="functions"
                 typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler"/>
@@ -47,6 +48,7 @@
                a.tts_voice_id      AS ttsVoiceId,
                a.mem_model_id      AS memModelId,
                a.intent_model_id   AS intentModelId,
+               a.realtime_model_id AS realtimeModelId,
                COALESCE(
                        (SELECT JSON_ARRAYAGG(
                                        JSON_OBJECT(
