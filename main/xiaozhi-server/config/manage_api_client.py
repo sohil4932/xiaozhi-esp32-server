@@ -183,13 +183,48 @@ async def get_agent_models(
     )
 
 
-async def generate_and_save_chat_summary(session_id: str) -> Optional[Dict]:
-    """生成并保存聊天记录总结"""
+async def save_memory_to_agent(mac_address: str, summary_memory: str) -> Optional[Dict]:
+    """Save memory summary to agent via device MAC address.
+
+    Uses PUT /agent/saveMemory/{macAddress} endpoint which updates
+    the agent's summaryMemory field (shown in GUI).
+
+    Args:
+        mac_address: Device MAC address (e.g. "84:fc:e6:64:07:74")
+        summary_memory: Memory summary JSON string
+    """
     try:
         return await ManageApiClient._instance._execute_async_request(
-            "POST",
-            f"/agent/chat-summary/{session_id}/save",
+            "PUT",
+            f"/agent/saveMemory/{mac_address}",
+            json={"summaryMemory": summary_memory}
         )
+    except Exception as e:
+        print(f"保存记忆到智能体失败: {e}")
+        return None
+
+
+async def generate_and_save_chat_summary(session_id: str, summary: str = None) -> Optional[Dict]:
+    """生成并保存聊天记录总结
+
+    Args:
+        session_id: Session ID
+        summary: Optional pre-generated summary to save. If None, backend will generate it.
+    """
+    try:
+        if summary is not None:
+            # Save pre-generated summary
+            return await ManageApiClient._instance._execute_async_request(
+                "POST",
+                f"/agent/chat-summary/{session_id}/save",
+                json_data={"summary": summary}
+            )
+        else:
+            # Let backend generate summary
+            return await ManageApiClient._instance._execute_async_request(
+                "POST",
+                f"/agent/chat-summary/{session_id}/save",
+            )
     except Exception as e:
         print(f"生成并保存聊天记录总结失败: {e}")
         return None

@@ -21,6 +21,7 @@ def create_instance(provider_type: str, config: dict, conn):
     provider_map = {
         "openai_realtime": ("core.providers.realtime.openai_realtime", "OpenAIRealtimeProvider"),
         "gemini_live": ("core.providers.realtime.gemini_live", "GeminiLiveProvider"),
+        "hume_realtime": ("core.providers.realtime.hume_realtime", "HumeRealtimeProvider"),
     }
 
     if provider_type not in provider_map:

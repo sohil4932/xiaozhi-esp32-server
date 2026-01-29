@@ -27,6 +27,7 @@ from typing import Dict, Any, Optional
 from config.logger import setup_logging
 from core.utils.dialogue import Message
 from core.handle.reportHandle import enqueue_asr_report, enqueue_tts_report
+from core.utils import textUtils
 
 TAG = __name__
 logger = setup_logging()
@@ -65,6 +66,7 @@ class OpenAIRealtimeProvider:
         self.model = config.get("model", "gpt-4o-realtime-preview-2024-12-17")
         self.voice = config.get("voice", "alloy")  # alloy, echo, shimmer
         self.language = config.get("language", "en")
+        self.voice_prompt = config.get("voice_prompt", "")  # Voice customization instructions
         # Ensure temperature is float, not string
         temp = config.get("temperature", 0.8)
         self.temperature = float(temp) if temp else 0.8
@@ -167,6 +169,32 @@ class OpenAIRealtimeProvider:
             if not instructions:
                 instructions = self.config.get("instructions", "You are a helpful assistant.")
 
+            # Prepend voice_prompt at the START of instructions so it's not buried
+            # Use ALL CAPS for emphasis - OpenAI Realtime follows these more strictly
+            if self.voice_prompt:
+                voice_section = (
+                    "## VOICE AND SPEECH STYLE - FOLLOW THESE RULES FOR HOW YOU SPEAK:\n"
+                    f"{self.voice_prompt}\n"
+                    "ALWAYS MAINTAIN THIS VOICE STYLE THROUGHOUT THE ENTIRE CONVERSATION.\n\n"
+                )
+                instructions = voice_section + instructions
+                logger.bind(tag=TAG).info(f"Added voice customization prompt at start of instructions")
+
+            # Add memory context if available
+            if hasattr(self.conn, 'memory') and self.conn.memory:
+                try:
+                    memory_context = await self.conn.memory.query_memory("")
+                    if memory_context:
+                        memory_section = (
+                            "\n\n## MEMORY - WHAT YOU REMEMBER ABOUT THIS USER:\n"
+                            f"{memory_context}\n"
+                            "USE THIS INFORMATION TO PERSONALIZE YOUR RESPONSES.\n"
+                        )
+                        instructions += memory_section
+                        logger.bind(tag=TAG).info(f"Added memory context to instructions")
+                except Exception as e:
+                    logger.bind(tag=TAG).warning(f"Failed to add memory context: {e}")
+
             # Get available tools from function handler
             tools = []
             if hasattr(self.conn, 'func_handler') and self.conn.func_handler:
@@ -196,9 +224,9 @@ class OpenAIRealtimeProvider:
                     },
                     "turn_detection": {
                         "type": "server_vad",
-                        "threshold": 0.5,  # Medium threshold for better interruption detection
+                        "threshold": 0.7,  # Increased from 0.6 to reduce false triggers from background noise
                         "prefix_padding_ms": 300,
-                        "silence_duration_ms": 500,  # Standard silence detection
+                        "silence_duration_ms": 1000,  # Increased from 700ms to 1000ms to reduce phantom speech detection
                         "create_response": True,  # Auto-create response after user speech
                         "interrupt_response": True  # Enable OpenAI's automatic interruption handling
                     },
@@ -216,6 +244,14 @@ class OpenAIRealtimeProvider:
 
             await self.ws.send(json.dumps(session_config))
             logger.bind(tag=TAG).info(f"Session configured | Tools: {len(tools)} | Voice: {self.voice}")
+
+            # Clear audio buffers and reset counters to ensure clean session start
+            self.pcm_buffer = bytearray()
+            self.audio_frames_sent = 0
+            self.audio_frames_received = 0
+            # Clear any residual audio in OpenAI's buffer
+            await self.ws.send(json.dumps({"type": "input_audio_buffer.clear"}))
+            logger.bind(tag=TAG).info("Audio buffers cleared for new session")
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Failed to configure session: {e}")
@@ -315,9 +351,10 @@ class OpenAIRealtimeProvider:
         - response.done: Response complete
         - error: Error occurred
         """
-        # Update activity timestamp
+        # Update activity timestamp (both local and connection's)
         import time
         self.last_activity_time = time.time()
+        self.conn.last_activity_time = self.last_activity_time * 1000  # Convert to milliseconds
 
         # Check if client has pressed abort button
         if hasattr(self.conn, 'client_abort') and self.conn.client_abort:
@@ -364,17 +401,33 @@ class OpenAIRealtimeProvider:
             transcript = event.get("transcript", "")
             logger.bind(tag=TAG).info(f"User said: {transcript}")
 
-            # Add to dialogue history (memory)
-            self.conn.dialogue.put(Message(role="user", content=transcript))
+            # Save to chat history with comprehensive error handling
+            try:
+                logger.bind(tag=TAG).debug(f"Attempting to save user message to dialogue - Memory enabled: {self.conn.memory is not None}")
 
-            # Report to chat history (for web UI display)
-            # Note: No audio available in Realtime mode, pass empty list
-            enqueue_asr_report(self.conn, transcript, [])
+                # Add to dialogue history (for memory)
+                if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
+                    self.conn.dialogue.put(Message(role="user", content=transcript))
+                    logger.bind(tag=TAG).debug("Successfully saved user message to dialogue")
+                else:
+                    logger.bind(tag=TAG).warning("dialogue object not available")
+
+            except Exception as e:
+                logger.bind(tag=TAG).error(f"Failed to save user message to dialogue: {e}", exc_info=True)
+
+            # Report to chat history (for web UI) - runs in background
+            try:
+                if self.conn.chat_history_conf > 0:
+                    enqueue_asr_report(self.conn, transcript, [])
+                    logger.bind(tag=TAG).debug("Enqueued ASR report for web UI")
+            except Exception as e:
+                logger.bind(tag=TAG).error(f"Failed to enqueue ASR report: {e}", exc_info=True)
 
         # Response events
         elif event_type == "response.created":
             import time
             self.response_start_time = time.time()  # Track when response started
+            self._emotion_sent_for_current_response = False  # Reset emotion flag for new response
 
             logger.bind(tag=TAG).info("AI response started")
             self.response_in_progress = True
@@ -421,12 +474,39 @@ class OpenAIRealtimeProvider:
             transcript = event.get("transcript", "")
             logger.bind(tag=TAG).info(f"Bot said: {transcript}")
 
-            # Add to dialogue history (memory)
-            self.conn.dialogue.put(Message(role="assistant", content=transcript))
+            # Extract and send emotion/emoji to ESP32 (only once per response)
+            if not hasattr(self, '_emotion_sent_for_current_response'):
+                self._emotion_sent_for_current_response = False
 
-            # Report to chat history (for web UI display)
-            # Note: No audio available in Realtime mode, pass empty list
-            enqueue_tts_report(self.conn, transcript, [])
+            if not self._emotion_sent_for_current_response and transcript.strip():
+                try:
+                    await textUtils.get_emotion(self.conn, transcript)
+                    self._emotion_sent_for_current_response = True
+                    logger.bind(tag=TAG).debug("Extracted and sent emotion to ESP32")
+                except Exception as e:
+                    logger.bind(tag=TAG).error(f"Failed to extract emotion: {e}", exc_info=True)
+
+            # Save to chat history with comprehensive error handling
+            try:
+                logger.bind(tag=TAG).debug(f"Attempting to save assistant message to dialogue - Memory enabled: {self.conn.memory is not None}")
+
+                # Add to dialogue history (for memory)
+                if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
+                    self.conn.dialogue.put(Message(role="assistant", content=transcript))
+                    logger.bind(tag=TAG).debug("Successfully saved assistant message to dialogue")
+                else:
+                    logger.bind(tag=TAG).warning("dialogue object not available")
+
+            except Exception as e:
+                logger.bind(tag=TAG).error(f"Failed to save assistant message to dialogue: {e}", exc_info=True)
+
+            # Report to chat history (for web UI) - runs in background
+            try:
+                if self.conn.chat_history_conf > 0:
+                    enqueue_tts_report(self.conn, transcript, [])
+                    logger.bind(tag=TAG).debug("Enqueued TTS report for web UI")
+            except Exception as e:
+                logger.bind(tag=TAG).error(f"Failed to enqueue TTS report: {e}", exc_info=True)
 
             # Send transcription to ESP32 for display
             await self._send_transcription_to_client(transcript)
@@ -470,6 +550,11 @@ class OpenAIRealtimeProvider:
             )
 
             self.response_in_progress = False
+
+            # Check if we should close connection after this response (e.g., from handle_exit_intent)
+            if hasattr(self.conn, 'close_after_chat') and self.conn.close_after_chat:
+                logger.bind(tag=TAG).info("Closing connection after chat as requested by handle_exit_intent")
+                await self.conn.close()
             self.response_start_time = 0  # Reset response timer
             # Full-duplex mode: No blocking needed
             # Audio flows continuously - ESP32 AEC + API turn detection handles echo
@@ -709,9 +794,10 @@ class OpenAIRealtimeProvider:
             if self.is_music_playing:
                 return
 
-            # Update activity timestamp - we're actively streaming
+            # Update activity timestamp - we're actively streaming (both local and connection's)
             import time
             self.last_activity_time = time.time()
+            self.conn.last_activity_time = self.last_activity_time * 1000  # Convert to milliseconds
 
             # Log every 50th frame to avoid spam
             self.audio_frames_received += 1

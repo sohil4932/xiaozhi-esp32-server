@@ -214,10 +214,11 @@ class ConnectionHandler:
             asyncio.create_task(self._background_initialize())
 
             try:
+                self.logger.bind(tag=TAG).info("开始监听WebSocket消息")
                 async for message in self.websocket:
                     await self._route_message(message)
-            except websockets.exceptions.ConnectionClosed:
-                self.logger.bind(tag=TAG).info("客户端断开连接")
+            except websockets.exceptions.ConnectionClosed as e:
+                self.logger.bind(tag=TAG).warning(f"WebSocket connection closed by client: code={e.code}, reason={e.reason}")
 
         except AuthenticationError as e:
             self.logger.bind(tag=TAG).error(f"Authentication failed: {str(e)}")
@@ -243,17 +244,27 @@ class ConnectionHandler:
         """保存记忆并关闭连接"""
         try:
             if self.memory:
+                # Make a thread-safe copy of the dialogue list before passing to background thread
+                with self.dialogue._lock:
+                    dialogue_snapshot = list(self.dialogue.dialogue)
+
                 # 使用线程池异步保存记忆
                 def save_memory_task():
                     try:
                         # 创建新事件循环（避免与主循环冲突）
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
-                        loop.run_until_complete(
-                            self.memory.save_memory(
-                                self.dialogue.dialogue, self.session_id
-                            )
+
+                        # Add timeout to prevent indefinite blocking
+                        # Pass the snapshot instead of the live list
+                        save_task = self.memory.save_memory(
+                            dialogue_snapshot, self.session_id
                         )
+                        loop.run_until_complete(
+                            asyncio.wait_for(save_task, timeout=30.0)
+                        )
+                    except asyncio.TimeoutError:
+                        self.logger.bind(tag=TAG).warning(f"保存记忆超时(30s) - 跳过")
                     except Exception as e:
                         self.logger.bind(tag=TAG).error(f"保存记忆失败: {e}")
                     finally:
@@ -1139,6 +1150,16 @@ class ConnectionHandler:
                     pass
                 self.timeout_task = None
 
+            # 清理 Realtime provider 资源 (if using Realtime mode)
+            if hasattr(self, "realtime_provider") and self.realtime_provider:
+                try:
+                    await self.realtime_provider.cleanup()
+                    self.logger.bind(tag=TAG).info("Realtime provider cleaned up")
+                except Exception as cleanup_error:
+                    self.logger.bind(tag=TAG).error(
+                        f"清理 Realtime provider 时出错: {cleanup_error}"
+                    )
+
             # 清理工具处理器资源
             if hasattr(self, "func_handler") and self.func_handler:
                 try:
@@ -1261,6 +1282,11 @@ class ConnectionHandler:
     async def _check_timeout(self):
         """检查连接超时"""
         try:
+            # Skip timeout check for Realtime mode - OpenAI handles keepalive
+            if self.use_realtime:
+                self.logger.bind(tag=TAG).info("Realtime mode - timeout check disabled")
+                return
+
             while not self.stop_event.is_set():
                 last_activity_time = self.last_activity_time
                 if self.need_bind:

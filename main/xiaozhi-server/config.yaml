@@ -224,7 +224,7 @@ selected_module:
   # TTS将根据配置名称对应的type调用实际的TTS适配器 (Realtime模式下将被忽略)
   # TTS: EdgeTTS
   # 记忆模块，默认不开启记忆；如果想使用超长记忆，推荐使用mem0ai；如果注重隐私，请使用本地的mem_local_short
-  Memory: nomem
+  Memory: mem_local_short  # Using local memory with OpenAI LLM for English summaries
   # 意图识别模块开启后，可以播放音乐、控制音量、识别退出指令。
   # 不想开通意图识别，就设置成：nointent
   # 意图识别可使用intent_llm。优点：通用性强，缺点：增加串行前置意图识别模块，会增加处理时间，支持控制音量大小等iot操作
@@ -292,7 +292,7 @@ Memory:
     # 配备记忆存储独立的思考模型
     # 如果这里不填，则会默认使用selected_module.LLM的模型作为意图识别的思考模型
     # 如果你的不想使用selected_module.LLM记忆存储，这里最好使用独立的LLM作为意图识别，例如使用免费的ChatGLMLLM
-    llm: ChatGLMLLM
+    llm: OpenAILLM  # Using OpenAI GPT-4o-mini for English memory summaries
 
 ASR:
   FunASR:
@@ -565,6 +565,14 @@ LLM:
     # Ali_memory_id：false（不使用）|你的memory_id（请在百练应用中设置中获取）
     # Tips！：Ali_memory未实现多用户存储记忆(记忆按id调用)
     ali_memory_id: false
+  OpenAILLM:
+    # OpenAI GPT models for general use and memory summarization
+    type: openai
+    base_url: https://api.openai.com/v1
+    model_name: gpt-4o-mini  # Fast and cost-effective for memory summarization
+    api_key: YOUR-OPENAI-API-KEY-HERE  # ⚠️ Use same key as Realtime API
+    temperature: 0.2  # Lower temperature for consistent memory summaries
+    max_tokens: 2000
   DoubaoLLM:
     # 定义LLM API类型
     type: openai
@@ -1125,6 +1133,14 @@ Realtime:
     language: en  # Language code (en, zh, gu, hi, etc.)
     temperature: 0.8  # Model temperature (0.6-1.2)
     max_response_output_tokens: 4096  # Max tokens per response
+    # Voice customization through natural language instructions
+    # This is ADDED to the system prompt to control voice characteristics
+    # Examples:
+    #   - "Speak in a high-pitched, cheerful voice like a young child"
+    #   - "Use a deep, calm, professional voice"
+    #   - "Speak quickly and energetically with enthusiasm"
+    #   - "Talk in a soft, gentle, soothing voice"
+    voice_prompt: "You MUST speak with a bright, cheerful, high-pitched voice like a young magical character. Your tone MUST be enthusiastic, energetic, and slightly faster paced. You MUST sound warm, friendly, playful, and expressive at all times. Inject emotion and life into every sentence you say. Talk quickly and cheerfully with excitement."
     # Instructions will be automatically loaded from agent-base-prompt.txt
     # You can override it here if needed:
     # instructions: "You are a helpful assistant."
@@ -1177,3 +1193,42 @@ Realtime:
     # Instructions will be automatically loaded from agent-base-prompt.txt
     # You can override it here if needed:
     # instructions: "You are a helpful assistant."
+
+  HumeEVI:
+    # Hume.ai EVI (Empathic Voice Interface) for emotionally intelligent voice conversations
+    # Platform: https://www.hume.ai/
+    # API Keys: https://platform.hume.ai/settings/keys
+    # Docs: https://dev.hume.ai/docs/speech-to-speech-evi/overview
+    # Pricing: Contact Hume.ai for pricing information
+    #
+    # This provider combines ASR, LLM, and TTS with emotional intelligence
+    # Now using EVI 4-mini - Hume's built-in lightweight model
+    # Expected latency: 300-500ms (similar to OpenAI Realtime)
+    #
+    # Key Features:
+    # - Emotionally intelligent responses with prosody analysis
+    # - Vocal expression measurement (detects user emotions)
+    # - Always interruptible conversation
+    # - Multi-language support (11 languages in EVI 4-mini)
+    # - Built-in EVI 4-mini model (no external LLM needed)
+    # - Custom voice and personality design
+    # - Tone and emotional context adaptation
+    #
+    # Unique Advantages:
+    # - Empathic AI that understands and responds to emotional cues
+    # - Prosody-aware speech synthesis
+    # - Real-time emotion detection during conversation
+    # - Rapid interruption handling (stops immediately when user speaks)
+    # - EVI 4-mini: Fast, cost-effective, emotionally aware
+    type: hume_realtime
+    # Required parameters
+    api_key: YOUR-HUME-API-KEY-HERE  # ⚠️ REPLACE WITH YOUR ACTUAL API KEY!
+    # Optional parameters
+    config_id: ""  # Optional: EVI configuration ID created via Hume web console
+                   # Leave empty to auto-create config with EVI 4-mini model
+                   # Create custom configs at: https://platform.hume.ai/settings/configs
+    language: en  # Language code (en, zh, es, fr, de, it, pt, ja, ko, hi, ar)
+    temperature: 0.8  # Model temperature (0.0-1.0)
+    # Note: Auto-config uses EVI 4-mini by default. Tools and system prompts
+    # are automatically configured. You can also create custom configs via
+    # Hume web console and specify config_id above.
