@@ -331,6 +331,7 @@ export default {
           vllmModelId: "",
           memModelId: "",
           intentModelId: "",
+          realtimeModelId: "",
         },
       },
       models: [
@@ -341,6 +342,7 @@ export default {
         { label: this.$t("roleConfig.intent"), key: "intentModelId", type: "Intent" },
         { label: this.$t("roleConfig.memory"), key: "memModelId", type: "Memory" },
         { label: this.$t("roleConfig.tts"), key: "ttsModelId", type: "TTS" },
+        { label: this.$t("roleConfig.realtime"), key: "realtimeModelId", type: "Realtime" },
       ],
       llmModeTypeMap: new Map(),
       modelOptions: {},
@@ -377,6 +379,7 @@ export default {
         llmModelId: this.form.model.llmModelId,
         vllmModelId: this.form.model.vllmModelId,
         ttsModelId: this.form.model.ttsModelId,
+        realtimeModelId: this.form.model.realtimeModelId,
         ttsVoiceId: this.form.ttsVoiceId,
         chatHistoryConf: this.form.chatHistoryConf,
         memModelId: this.form.model.memModelId,
@@ -433,6 +436,7 @@ export default {
               vllmModelId: "",
               memModelId: "",
               intentModelId: "",
+              realtimeModelId: "",
             },
           };
           this.currentFunctions = [];
@@ -488,6 +492,7 @@ export default {
           vllmModelId: templateData.vllmModelId || this.form.model.vllmModelId,
           memModelId: templateData.memModelId || this.form.model.memModelId,
           intentModelId: templateData.intentModelId || this.form.model.intentModelId,
+          realtimeModelId: templateData.realtimeModelId || this.form.model.realtimeModelId,
         },
       };
     },
@@ -505,6 +510,7 @@ export default {
               vllmModelId: data.data.vllmModelId,
               memModelId: data.data.memModelId,
               intentModelId: data.data.intentModelId,
+              realtimeModelId: data.data.realtimeModelId,
             },
           };
           // 后端只给了最小映射：[{ id, agentId, pluginId }, ...]

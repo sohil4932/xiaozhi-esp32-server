@@ -216,6 +216,14 @@ async def handle_mcp_message(
                     if hasattr(conn, "func_handler") and conn.func_handler:
                         conn.func_handler.tool_manager.refresh_tools()
                         conn.func_handler.current_support_functions()
+
+                    # Update Realtime API session with all tools (after refresh)
+                    if hasattr(conn, 'use_realtime') and conn.use_realtime and hasattr(conn, 'realtime_provider'):
+                        try:
+                            await conn.realtime_provider.update_tools()
+                            logger.bind(tag=TAG).info("Updated Realtime API session with device MCP tools")
+                        except Exception as e:
+                            logger.bind(tag=TAG).error(f"Failed to update Realtime API tools: {e}")
             return
 
     # Handle method calls (requests from the client)
