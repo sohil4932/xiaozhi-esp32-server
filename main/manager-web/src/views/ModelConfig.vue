@@ -55,6 +55,9 @@
           <el-menu-item index="rag">
             <span class="menu-text">{{ $t("modelConfig.rag") }}</span>
           </el-menu-item>
+          <el-menu-item index="realtime">
+            <span class="menu-text">{{ $t("modelConfig.realtime") }}</span>
+          </el-menu-item>
         </el-menu>
 
         <!-- 右侧内容 -->

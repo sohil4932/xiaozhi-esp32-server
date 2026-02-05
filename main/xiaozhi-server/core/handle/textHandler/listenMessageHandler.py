@@ -31,6 +31,17 @@ class ListenTextMessageHandler(TextMessageHandler):
         if msg_json["state"] == "start":
             # 设备从播放模式切回录音模式,清除所有音频状态和缓冲区
             conn.reset_audio_states()
+            conn.client_have_voice = True
+            conn.client_voice_stop = False
+
+            # NEW: Connect to Realtime API if using Realtime mode
+            if conn.use_realtime and conn.realtime_provider:
+                if not conn.realtime_provider.is_connected:
+                    try:
+                        await conn.realtime_provider.connect()
+                        conn.logger.bind(tag=TAG).info("Realtime API WebSocket connected")
+                    except Exception as e:
+                        conn.logger.bind(tag=TAG).error(f"Failed to connect to Realtime API: {e}")
         elif msg_json["state"] == "stop":
             conn.client_voice_stop = True
             if conn.asr.interface_type == InterfaceType.STREAM:

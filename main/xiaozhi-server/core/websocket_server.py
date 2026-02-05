@@ -53,6 +53,7 @@ class WebSocketServer:
             False,
             "Memory" in self.config["selected_module"],
             "Intent" in self.config["selected_module"],
+            "Realtime" in self.config["selected_module"],
         )
         self._vad = modules["vad"] if "vad" in modules else None
         self._asr = modules["asr"] if "asr" in modules else None
@@ -184,6 +185,7 @@ class WebSocketServer:
                     False,
                     "Memory" in new_config["selected_module"],
                     "Intent" in new_config["selected_module"],
+                    "Realtime" in new_config["selected_module"],
                 )
 
                 # 更新组件实例

@@ -1,9 +1,11 @@
 import os
 import re
 import time
+import json
 import random
 import difflib
 import traceback
+import asyncio
 from pathlib import Path
 from core.handle.sendAudioHandle import send_stt_message
 from plugins_func.register import register_function, ToolType, ActionResponse, Action
@@ -13,6 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
+from core.utils.util import audio_to_data
 
 TAG = __name__
 
@@ -22,13 +25,13 @@ play_music_function_desc = {
     "type": "function",
     "function": {
         "name": "play_music",
-        "description": "唱歌、听歌、播放音乐的方法。",
+        "description": "Play music, sing songs. Use when user wants to listen to music.",
         "parameters": {
             "type": "object",
             "properties": {
                 "song_name": {
                     "type": "string",
-                    "description": "歌曲名称，如果用户没有指定具体歌名则为'random', 明确指定的时返回音乐的名字 示例: ```用户:播放两只老虎\n参数：两只老虎``` ```用户:播放音乐 \n参数：random ```",
+                    "description": "Song name. Use 'random' if user doesn't specify. Example: 'ABCD Song' or 'random'"
                 }
             },
             "required": ["song_name"],
@@ -40,60 +43,54 @@ play_music_function_desc = {
 @register_function("play_music", play_music_function_desc, ToolType.SYSTEM_CTL)
 def play_music(conn: "ConnectionHandler", song_name: str):
     try:
-        music_intent = (
-            f"播放音乐 {song_name}" if song_name != "random" else "随机播放音乐"
-        )
+        music_intent = f"Play music {song_name}" if song_name != "random" else "Play random music"
 
-        # 检查事件循环状态
         if not conn.loop.is_running():
-            conn.logger.bind(tag=TAG).error("事件循环未运行，无法提交任务")
+            conn.logger.bind(tag=TAG).error("Event loop not running")
             return ActionResponse(
-                action=Action.RESPONSE, result="系统繁忙", response="请稍后再试"
+                action=Action.RESPONSE, result="System busy", response="Please try again later"
             )
 
-        # 提交异步任务
-        task = conn.loop.create_task(
-            handle_music_command(conn, music_intent)  # 封装异步逻辑
-        )
+        task = conn.loop.create_task(handle_music_command(conn, music_intent))
 
-        # 非阻塞回调处理
         def handle_done(f):
             try:
-                f.result()  # 可在此处理成功逻辑
-                conn.logger.bind(tag=TAG).info("播放完成")
+                f.result()
+                conn.logger.bind(tag=TAG).info("Playback complete")
             except Exception as e:
-                conn.logger.bind(tag=TAG).error(f"播放失败: {e}")
+                conn.logger.bind(tag=TAG).error(f"Playback failed: {e}")
 
         task.add_done_callback(handle_done)
 
         return ActionResponse(
-            action=Action.NONE, result="指令已接收", response="正在为您播放音乐"
+            action=Action.NONE, result="Command received", response="Playing music for you"
         )
     except Exception as e:
-        conn.logger.bind(tag=TAG).error(f"处理音乐意图错误: {e}")
+        conn.logger.bind(tag=TAG).error(f"Music error: {e}")
         return ActionResponse(
-            action=Action.RESPONSE, result=str(e), response="播放音乐时出错了"
+            action=Action.RESPONSE, result=str(e), response="Error playing music"
         )
 
 
 def _extract_song_name(text):
-    """从用户输入中提取歌名"""
-    for keyword in ["播放音乐"]:
-        if keyword in text:
-            parts = text.split(keyword)
+    """Extract song name from user input"""
+    keywords = ["play music", "play", "sing"]
+    for keyword in keywords:
+        if keyword in text.lower():
+            parts = text.lower().split(keyword)
             if len(parts) > 1:
                 return parts[1].strip()
     return None
 
 
 def _find_best_match(potential_song, music_files):
-    """查找最匹配的歌曲"""
+    """Find best matching song"""
     best_match = None
     highest_ratio = 0
 
     for music_file in music_files:
         song_name = os.path.splitext(music_file)[0]
-        ratio = difflib.SequenceMatcher(None, potential_song, song_name).ratio()
+        ratio = difflib.SequenceMatcher(None, potential_song.lower(), song_name.lower()).ratio()
         if ratio > highest_ratio and ratio > 0.4:
             highest_ratio = ratio
             best_match = music_file
@@ -105,13 +102,9 @@ def get_music_files(music_dir, music_ext):
     music_files = []
     music_file_names = []
     for file in music_dir.rglob("*"):
-        # 判断是否是文件
         if file.is_file():
-            # 获取文件扩展名
             ext = file.suffix.lower()
-            # 判断扩展名是否在列表中
             if ext in music_ext:
-                # 添加相对路径
                 music_files.append(str(file.relative_to(music_dir)))
                 music_file_names.append(
                     os.path.splitext(str(file.relative_to(music_dir)))[0]
@@ -126,7 +119,7 @@ def initialize_music_handler(conn: "ConnectionHandler"):
         if "play_music" in plugins_config:
             MUSIC_CACHE["music_config"] = plugins_config["play_music"]
             MUSIC_CACHE["music_dir"] = os.path.abspath(
-                MUSIC_CACHE["music_config"].get("music_dir", "./music")  # 默认路径修改
+                MUSIC_CACHE["music_config"].get("music_dir", "./music")
             )
             MUSIC_CACHE["music_ext"] = MUSIC_CACHE["music_config"].get(
                 "music_ext", (".mp3", ".wav", ".p3")
@@ -138,7 +131,6 @@ def initialize_music_handler(conn: "ConnectionHandler"):
             MUSIC_CACHE["music_dir"] = os.path.abspath("./music")
             MUSIC_CACHE["music_ext"] = (".mp3", ".wav", ".p3")
             MUSIC_CACHE["refresh_time"] = 60
-        # 获取音乐文件列表
         MUSIC_CACHE["music_files"], MUSIC_CACHE["music_file_names"] = get_music_files(
             MUSIC_CACHE["music_dir"], MUSIC_CACHE["music_ext"]
         )
@@ -150,14 +142,11 @@ async def handle_music_command(conn: "ConnectionHandler", text):
     initialize_music_handler(conn)
     global MUSIC_CACHE
 
-    """处理音乐播放指令"""
     clean_text = re.sub(r"[^\w\s]", "", text).strip()
-    conn.logger.bind(tag=TAG).debug(f"检查是否是音乐命令: {clean_text}")
+    conn.logger.bind(tag=TAG).debug(f"Checking music command: {clean_text}")
 
-    # 尝试匹配具体歌名
     if os.path.exists(MUSIC_CACHE["music_dir"]):
         if time.time() - MUSIC_CACHE["scan_time"] > MUSIC_CACHE["refresh_time"]:
-            # 刷新音乐文件列表
             MUSIC_CACHE["music_files"], MUSIC_CACHE["music_file_names"] = (
                 get_music_files(MUSIC_CACHE["music_dir"], MUSIC_CACHE["music_ext"])
             )
@@ -167,59 +156,157 @@ async def handle_music_command(conn: "ConnectionHandler", text):
         if potential_song:
             best_match = _find_best_match(potential_song, MUSIC_CACHE["music_files"])
             if best_match:
-                conn.logger.bind(tag=TAG).info(f"找到最匹配的歌曲: {best_match}")
+                conn.logger.bind(tag=TAG).info(f"Best match found: {best_match}")
                 await play_local_music(conn, specific_file=best_match)
                 return True
-    # 检查是否是通用播放音乐命令
     await play_local_music(conn)
     return True
 
 
 def _get_random_play_prompt(song_name):
-    """生成随机播放引导语"""
-    # 移除文件扩展名
+    """Generate random play introduction"""
     clean_name = os.path.splitext(song_name)[0]
     prompts = [
-        f"正在为您播放，《{clean_name}》",
-        f"请欣赏歌曲，《{clean_name}》",
-        f"即将为您播放，《{clean_name}》",
-        f"现在为您带来，《{clean_name}》",
-        f"让我们一起聆听，《{clean_name}》",
-        f"接下来请欣赏，《{clean_name}》",
-        f"此刻为您献上，《{clean_name}》",
+        f"Now playing {clean_name}",
+        f"Playing {clean_name} for you",
+        f"Here comes {clean_name}",
+        f"Enjoy {clean_name}",
+        f"Let's listen to {clean_name}",
+        f"Now playing song {clean_name}",
+        f"Playing {clean_name}",
     ]
-    # 直接使用random.choice，不设置seed
     return random.choice(prompts)
 
 
 async def play_local_music(conn: "ConnectionHandler", specific_file=None):
+async def _stream_music_file_realtime(conn, music_path):
+    """Stream audio file directly to ESP32 in Realtime mode
+
+    This bypasses the TTS queue and OpenAI TTS, streaming the audio file
+    directly to the client using the same low-level packet sending method
+    used by the Realtime provider.
+
+    Args:
+        conn: Connection object
+        music_path: Path to the music file
+    """
+    try:
+        conn.logger.bind(tag=TAG).info(f"Converting music file to Opus format: {music_path}")
+
+        # Convert audio file to Opus packets (16kHz, 60ms frames)
+        # This uses the same conversion logic as TTS providers
+        audio_packets = await audio_to_data(music_path, is_opus=True)
+
+        if not audio_packets:
+            conn.logger.bind(tag=TAG).error("Failed to convert music file to audio packets")
+            return
+
+        conn.logger.bind(tag=TAG).info(f"Streaming {len(audio_packets)} audio packets to client")
+
+        # Pause OpenAI Realtime audio processing during music playback
+        # This prevents the session from processing incoming audio and interrupting music
+        if hasattr(conn, 'realtime_provider') and conn.realtime_provider:
+            # Cancel any active response
+            if conn.realtime_provider.response_in_progress:
+                await conn.realtime_provider._cancel_response()
+                conn.logger.bind(tag=TAG).info("Cancelled active OpenAI response for music playback")
+
+            # Set flag to pause audio processing during music
+            conn.realtime_provider.is_music_playing = True
+            conn.logger.bind(tag=TAG).info("Paused OpenAI Realtime audio processing for music")
+
+        # Send TTS start signal to prepare client for audio
+        if conn.websocket:
+            await conn.websocket.send(
+                json.dumps({
+                    "type": "tts",
+                    "state": "start",
+                    "session_id": conn.session_id
+                })
+            )
+
+        # Stream each Opus packet directly to the client
+        # Using the same low-level method as OpenAI Realtime provider
+        for i, opus_packet in enumerate(audio_packets):
+            if hasattr(conn, 'client_abort') and conn.client_abort:
+                conn.logger.bind(tag=TAG).info("Music playback aborted by client")
+                break
+
+            # Send opus packet directly to client
+            await conn.send_audio_to_client(opus_packet)
+
+            # Pace sending: 50ms delay to match 60ms playback rate
+            # This prevents network buffer overflow while maintaining smooth playback
+            await asyncio.sleep(0.050)
+
+            # Log progress every 100 packets
+            if (i + 1) % 100 == 0:
+                conn.logger.bind(tag=TAG).debug(f"Streamed {i + 1}/{len(audio_packets)} packets")
+
+        # Send TTS stop signal when complete
+        if conn.websocket:
+            await conn.websocket.send(
+                json.dumps({
+                    "type": "tts",
+                    "state": "stop",
+                    "session_id": conn.session_id
+                })
+            )
+
+        conn.logger.bind(tag=TAG).info("Music streaming completed")
+
+        # Resume OpenAI Realtime audio processing after music
+        if hasattr(conn, 'realtime_provider') and conn.realtime_provider:
+            conn.realtime_provider.is_music_playing = False
+            # Clear the input audio buffer to start fresh
+            if conn.realtime_provider.ws:
+                await conn.realtime_provider.ws.send(json.dumps({"type": "input_audio_buffer.clear"}))
+            conn.logger.bind(tag=TAG).info("Resumed OpenAI Realtime audio processing")
+
+    except Exception as e:
+        conn.logger.bind(tag=TAG).error(f"Failed to stream music file: {str(e)}")
+        conn.logger.bind(tag=TAG).error(f"Error details: {traceback.format_exc()}")
+
+        # Make sure to resume processing even if music fails
+        if hasattr(conn, 'realtime_provider') and conn.realtime_provider:
+            conn.realtime_provider.is_music_playing = False
+            conn.logger.bind(tag=TAG).info("Resumed OpenAI Realtime processing after error")
+
+
+async def play_local_music(conn, specific_file=None):
     global MUSIC_CACHE
-    """播放本地音乐文件"""
     try:
         if not os.path.exists(MUSIC_CACHE["music_dir"]):
             conn.logger.bind(tag=TAG).error(
-                f"音乐目录不存在: " + MUSIC_CACHE["music_dir"]
+                f"Music directory not found: " + MUSIC_CACHE["music_dir"]
             )
             return
 
-        # 确保路径正确性
         if specific_file:
             selected_music = specific_file
             music_path = os.path.join(MUSIC_CACHE["music_dir"], specific_file)
         else:
             if not MUSIC_CACHE["music_files"]:
-                conn.logger.bind(tag=TAG).error("未找到MP3音乐文件")
+                conn.logger.bind(tag=TAG).error("No music files found")
                 return
             selected_music = random.choice(MUSIC_CACHE["music_files"])
             music_path = os.path.join(MUSIC_CACHE["music_dir"], selected_music)
 
         if not os.path.exists(music_path):
-            conn.logger.bind(tag=TAG).error(f"选定的音乐文件不存在: {music_path}")
+            conn.logger.bind(tag=TAG).error(f"Music file not found: {music_path}")
             return
+
         text = _get_random_play_prompt(selected_music)
         await send_stt_message(conn, text)
         conn.dialogue.put(Message(role="assistant", content=text))
 
+        # Check if we're in Realtime mode
+        if hasattr(conn, 'use_realtime') and conn.use_realtime:
+            conn.logger.bind(tag=TAG).info(f"Realtime mode: Streaming music file directly - {music_path}")
+            await _stream_music_file_realtime(conn, music_path)
+            return
+
+        # Standard TTS queue mode (ElevenLabs, etc.)
         if conn.intent_type == "intent_llm":
             conn.tts.tts_text_queue.put(
                 TTSMessageDTO(
@@ -254,5 +341,5 @@ async def play_local_music(conn: "ConnectionHandler", specific_file=None):
             )
 
     except Exception as e:
-        conn.logger.bind(tag=TAG).error(f"播放音乐失败: {str(e)}")
-        conn.logger.bind(tag=TAG).error(f"详细错误: {traceback.format_exc()}")
+        conn.logger.bind(tag=TAG).error(f"Music playback failed: {str(e)}")
+        conn.logger.bind(tag=TAG).error(f"Error details: {traceback.format_exc()}")

@@ -141,4 +141,8 @@ class MarkdownCleaner:
         # 去除emoji表情
         text = check_emoji(text)
 
-        return text.strip()
+        # IMPORTANT: Do NOT strip() here! Streaming text chunks need to preserve
+        # leading/trailing spaces to maintain word boundaries when concatenated
+        # Only strip if this is a complete standalone text (has no leading/trailing space)
+        # For streaming, spaces are critical for proper word separation
+        return text

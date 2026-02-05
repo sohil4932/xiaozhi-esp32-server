@@ -95,6 +95,7 @@ public class ConfigServiceImpl implements ConfigService {
                 null,
                 null,
                 null,
+                null,  // realtimeModelId
                 result,
                 isCache);
 
@@ -216,6 +217,7 @@ public class ConfigServiceImpl implements ConfigService {
                 agent.getMemModelId(),
                 agent.getIntentModelId(),
                 null,
+                agent.getRealtimeModelId(),
                 result,
                 true);
 
@@ -393,13 +395,14 @@ public class ConfigServiceImpl implements ConfigService {
             String memModelId,
             String intentModelId,
             String ragModelId,
+            String realtimeModelId,
             Map<String, Object> result,
             boolean isCache) {
         Map<String, String> selectedModule = new HashMap<>();
 
-        String[] modelTypes = { "VAD", "ASR", "TTS", "Memory", "Intent", "LLM", "VLLM", "RAG" };
+        String[] modelTypes = { "VAD", "ASR", "TTS", "Memory", "Intent", "LLM", "VLLM", "RAG", "Realtime" };
         String[] modelIds = { vadModelId, asrModelId, ttsModelId, memModelId, intentModelId, llmModelId, vllmModelId,
-                ragModelId };
+                ragModelId, realtimeModelId };
         String intentLLMModelId = null;
         String memLocalShortLLMModelId = null;
 

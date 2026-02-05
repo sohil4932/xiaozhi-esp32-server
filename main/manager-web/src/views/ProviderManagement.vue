@@ -148,7 +148,8 @@ export default {
         { value: "Memory", labelKey: 'providerManagement.modelType.Memory' },
         { value: "VAD", labelKey: 'providerManagement.modelType.VAD' },
         { value: "Plugin", labelKey: 'providerManagement.modelType.Plugin' },
-        { value: "RAG", labelKey: 'providerManagement.modelType.RAG' }
+        { value: "RAG", labelKey: 'providerManagement.modelType.RAG' },
+        { value: "Realtime", labelKey: 'providerManagement.modelType.Realtime' }
       ],
       currentPage: 1,
       loading: false,

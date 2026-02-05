@@ -32,7 +32,7 @@ class MemoryProvider(MemoryProviderBase):
     async def save_memory(self, msgs, session_id=None):
         if not self.use_mem0:
             return None
-        if len(msgs) < 2:
+        if not msgs or len(msgs) < 2:
             return None
 
         try:

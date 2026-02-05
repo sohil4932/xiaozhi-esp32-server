@@ -666,7 +666,7 @@ export default {
 
   // Home page text
   'home.addAgent': 'Add Agent',
-  'home.greeting': 'Hi XiaoZhi',
+  'home.greeting': 'Hi NoKo',
   'home.wish': "Let's have a wonderful day!",
   'home.languageModel': 'LLM',
   'home.voiceModel': 'TTS',
@@ -759,6 +759,7 @@ export default {
   'roleConfig.llm': 'Language Model',
   'roleConfig.vllm': 'Vision Model',
   'roleConfig.tts': 'Text-to-Speech',
+  'roleConfig.realtime': 'Realtime API',
   'roleConfig.memoryHis': 'Memory',
   'roleConfig.memory': 'Memory Model',
   'roleConfig.intent': 'Intent Recognition',
@@ -830,6 +831,7 @@ export default {
   'modelConfig.tts': 'Text-to-Speech',
   'modelConfig.memory': 'Memory',
   'modelConfig.rag': 'RAG',
+  'modelConfig.realtime': 'Realtime API',
   'modelConfig.modelId': 'Model ID',
   'modelConfig.modelName': 'Model Name',
   'modelConfig.provider': 'Interface Type',
@@ -987,6 +989,7 @@ export default {
   'providerManagement.modelType.VAD': 'Voice Activity Detection',
   'providerManagement.modelType.Plugin': 'Plugin Tool',
   'providerManagement.modelType.RAG': 'RAG',
+  'providerManagement.modelType.Realtime': 'Realtime API',
 
   // Provider Dialog translations
   'providerDialog.category': 'Category',

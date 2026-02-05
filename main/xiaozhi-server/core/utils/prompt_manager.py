@@ -14,13 +14,13 @@ from jinja2 import Template
 TAG = __name__
 
 WEEKDAY_MAP = {
-    "Monday": "星期一",
-    "Tuesday": "星期二",
-    "Wednesday": "星期三",
-    "Thursday": "星期四",
-    "Friday": "星期五",
-    "Saturday": "星期六",
-    "Sunday": "星期日",
+    "Monday": "Monday",
+    "Tuesday": "Tuesday",
+    "Wednesday": "Wednesday",
+    "Thursday": "Thursday",
+    "Friday": "Friday",
+    "Saturday": "Saturday",
+    "Sunday": "Sunday",
 }
 
 EMOJI_List = [
@@ -159,7 +159,7 @@ class PromptManager:
             return location
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"获取位置信息失败: {e}")
-            return "未知位置"
+            return "Unknown location"
 
     def _get_weather_info(self, conn: "ConnectionHandler", location: str) -> str:
         """获取天气信息"""
@@ -174,16 +174,16 @@ class PromptManager:
             from plugins_func.register import ActionResponse
 
             # 调用get_weather函数
-            result = get_weather(conn, location=location, lang="zh_CN")
+            result = get_weather(conn, location=location, lang="en")
             if isinstance(result, ActionResponse):
                 weather_report = result.result
                 self.cache_manager.set(self.CacheType.WEATHER, location, weather_report)
                 return weather_report
-            return "天气信息获取失败"
+            return "Weather information unavailable"
 
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"获取天气信息失败: {e}")
-            return "天气信息获取失败"
+            return "Weather information unavailable"
 
     def update_context_info(self, conn, client_ip: str):
         """同步更新上下文信息"""
