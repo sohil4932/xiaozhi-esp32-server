@@ -836,6 +836,7 @@ export default {
   'modelConfig.unknown': 'Không xác định',
   'modelConfig.isEnabled': 'Đã bật',
   'modelConfig.isDefault': 'Mặc định',
+  'modelConfig.defaultModelCannotDisable': 'Cấu hình mô hình mặc định không thể tắt',
   'modelConfig.action': 'Hành động',
   'modelConfig.voiceManagement': 'Quản lý giọng nói',
   'modelConfig.edit': 'Chỉnh sửa',

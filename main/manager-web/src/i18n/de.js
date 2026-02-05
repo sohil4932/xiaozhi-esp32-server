@@ -836,6 +836,7 @@ export default {
   'modelConfig.unknown': 'Unbekannt',
   'modelConfig.isEnabled': 'Aktiviert',
   'modelConfig.isDefault': 'Standard',
+  'modelConfig.defaultModelCannotDisable': 'Standardmodellkonfiguration kann nicht deaktiviert werden',
   'modelConfig.action': 'Aktion',
   'modelConfig.voiceManagement': 'Stimmverwaltung',
   'modelConfig.edit': 'Bearbeiten',

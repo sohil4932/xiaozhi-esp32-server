@@ -223,6 +223,17 @@ class MemoryProvider(MemoryProviderBase):
 
         msgStr = ""
         for msg in msgs:
+            content = msg.content
+
+            # Extract content from JSON format if present (for ASR with emotion/language tags)
+            try:
+                if content and content.strip().startswith("{") and content.strip().endswith("}"):
+                    data = json.loads(content)
+                    if "content" in data:
+                        content = data["content"]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                # If parsing fails, use original content
+                pass
             # Skip messages with None role or content
             if not msg or not hasattr(msg, 'role') or not hasattr(msg, 'content'):
                 continue
@@ -230,9 +241,9 @@ class MemoryProvider(MemoryProviderBase):
                 continue
 
             if msg.role == "user":
-                msgStr += f"User: {msg.content}\n"
+                msgStr += f"User: {content}\n"
             elif msg.role == "assistant":
-                msgStr += f"Assistant: {msg.content}\n"
+                msgStr += f"Assistant: {content}\n"
         if self.short_memory and len(self.short_memory) > 0:
             msgStr += "Previous Memory:\n"
             msgStr += self.short_memory
@@ -251,6 +262,13 @@ class MemoryProvider(MemoryProviderBase):
             )
             json_str = extract_json_data(result)
             try:
+                result = self.llm.response_no_stream(
+                    short_term_memory_prompt,
+                    msgStr,
+                    max_tokens=2000,
+                    temperature=0.2,
+                )
+                json_str = extract_json_data(result)
                 json.loads(json_str)  # 检查json格式是否正确
                 self.short_memory = json_str
 
@@ -264,6 +282,11 @@ class MemoryProvider(MemoryProviderBase):
                     await save_memory_to_agent(self.role_id, self.short_memory)
                     logger.bind(tag=TAG).debug(f"Memory saved to agent via API for device: {self.role_id}")
             except Exception as e:
+                logger.bind(tag=TAG).error(f"Error in saving memory: {e}")
+        else:
+            # 当save_to_file为False时，调用Java端的聊天记录总结接口
+            summary_id = session_id if session_id else self.role_id
+            await generate_and_save_chat_summary(summary_id)
                 logger.bind(tag=TAG).error(f"Failed to parse/save memory JSON: {e}")
         except Exception as e:
             logger.bind(tag=TAG).error(f"Failed to generate memory summary: {e}")

@@ -238,7 +238,7 @@ This project provides the following testing tools to help you verify the system 
 | Intelligent Dialogue | Supports multiple LLM(large language models), implements intelligent dialogue |
 | Visual Perception | Supports multiple VLLM(vision large models), implements multimodal interaction |
 | Intent Recognition | Supports LLM intent recognition, Function Call function calling, provides plugin-based intent processing mechanism |
-| Memory System | Supports local short-term memory, mem0ai interface memory, with memory summarization functionality |
+| Memory System | Supports local short-term memory, mem0ai interface memory, PowerMem intelligent memory, with memory summarization functionality |
 | Knowledge Base | Supports RAGFlow knowledge base, enabling LLM to judge whether to schedule the knowledge base after receiving the user's question, and then answer the question |
 | Command Delivery | Supports MCP command delivery to ESP32 devices via MQTT protocol from Smart Console |
 | Tool Calling | Supports client IOT protocol, client MCP protocol, server MCP protocol, MCP endpoint protocol, custom tool functions |
@@ -330,7 +330,9 @@ In fact, any VLLM that supports OpenAI interface calls can be integrated and use
 | Type | Platform Name | Usage Method | Pricing Model | Notes |
 |:------:|:---------------:|:----:|:---------:|:--:|
 | Memory | mem0ai | Interface calls | 1000 times/month quota | |
+| Memory | [powermem](./docs/powermem-integration.md) | Local summarization | Depends on LLM and DB | OceanBase open source, supports intelligent retrieval |
 | Memory | mem_local_short | Local summarization | Free | |
+| Memory | nomem | No memory mode | Free | |
 
 ---
 

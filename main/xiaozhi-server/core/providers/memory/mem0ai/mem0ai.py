@@ -1,3 +1,4 @@
+import json
 import traceback
 
 from ..base import MemoryProviderBase, logger
@@ -36,17 +37,25 @@ class MemoryProvider(MemoryProviderBase):
 
         try:
             # Format the content as a message list for mem0
-            # Filter out messages with None values and non-system messages
-            messages = [
-                {"role": message.role, "content": message.content}
-                for message in msgs
-                if message.role and message.role != "system" and message.content
-            ]
+            messages = []
+            for message in msgs:
+                if message.role == "system":
+                    continue
 
-            # Only save if we have valid messages
-            if not messages:
-                logger.bind(tag=TAG).debug("No valid messages to save")
-                return None
+                content = message.content
+
+                # Extract content from JSON format if present (for ASR with emotion/language tags)
+                # Same logic as in query_memory method
+                try:
+                    if content and content.strip().startswith("{") and content.strip().endswith("}"):
+                        data = json.loads(content)
+                        if "content" in data:
+                            content = data["content"]
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    # If parsing fails, use original content
+                    pass
+
+                messages.append({"role": message.role, "content": content})
 
             result = self.client.add(messages, user_id=self.role_id)
             logger.bind(tag=TAG).debug(f"Save memory result: {result}")
@@ -63,7 +72,16 @@ class MemoryProvider(MemoryProviderBase):
 
             filters = {"user_id": self.role_id}
 
-            results = self.client.search(query, filters=filters)
+            search_query = query
+            try:
+                if query.strip().startswith("{") and query.strip().endswith("}"):
+                    data = json.loads(query)
+                    if "content" in data:
+                        search_query = data["content"]
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+            results = self.client.search(search_query, filters=filters)
             if not results or "results" not in results:
                 return ""
 

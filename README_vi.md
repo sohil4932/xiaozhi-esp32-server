@@ -241,7 +241,7 @@ Dự án này cung cấp các công cụ kiểm tra sau để giúp bạn xác m
 | Đối thoại thông minh | Hỗ trợ nhiều LLM(Mô hình ngôn ngữ lớn), thực hiện đối thoại thông minh |
 | Cảm nhận thị giác | Hỗ trợ nhiều VLLM(Mô hình lớn thị giác), thực hiện tương tác đa phương thức |
 | Nhận dạng ý định | Hỗ trợ nhận dạng ý định mô hình lớn gắn ngoài, gọi hàm tự chủ mô hình lớn, cung cấp cơ chế xử lý ý định dạng plugin |
-| Hệ thống bộ nhớ | Hỗ trợ bộ nhớ ngắn hạn cục bộ, bộ nhớ giao diện mem0ai, có chức năng tóm tắt bộ nhớ |
+| Hệ thống bộ nhớ | Hỗ trợ bộ nhớ ngắn hạn cục bộ, bộ nhớ giao diện mem0ai, bộ nhớ thông minh PowerMem, có chức năng tóm tắt bộ nhớ |
 | Kho tri thức | Hỗ trợ kho tri thức RAGFlow, cho phép mô hình lớn đánh giá cần gọi kho tri thức trước khi trả lời |
 | Gọi công cụ | Hỗ trợ giao thức IOT phía client, giao thức MCP phía client, giao thức MCP phía server, giao thức điểm truy cập MCP, hàm công cụ tùy chỉnh |
 | Gửi lệnh | Dựa vào giao thức MQTT, hỗ trợ gửi lệnh MCP từ bảng điều khiển thông minh xuống thiết bị ESP32 |
@@ -329,6 +329,7 @@ Trên thực tế, bất kỳ VLLM nào hỗ trợ gọi giao diện openai đ�
 |   Loại   |      Tên nền tảng       | Phương pháp sử dụng |   Mô hình thu phí    | Ghi chú |
 |:------:|:---------------:|:----:|:---------:|:--:|
 | Memory |     mem0ai      | Gọi giao diện | Hạn mức 1000 lần/tháng |    |
+| Memory |     [powermem](./docs/powermem-integration.md)    | Tóm tắt cục bộ | Phụ thuộc vào LLM và DB |  OceanBase mã nguồn mở, hỗ trợ tìm kiếm thông minh  |
 | Memory | mem_local_short | Tóm tắt cục bộ |    Miễn phí     |    |
 | Memory |     nomem       | Chế độ không có bộ nhớ |    Miễn phí     |    |
 
