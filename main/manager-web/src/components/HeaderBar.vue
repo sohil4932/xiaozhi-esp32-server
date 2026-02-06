@@ -210,6 +210,7 @@ export default {
       paramDropdownVisible: false,
       voiceCloneDropdownVisible: false,
       userMenuVisible: false, // 添加用户菜单可见状态
+      menuVisibleTimer: null, // 菜单显示定时器，防止够快触发
       isSmallScreen: false,
       // 搜索历史相关
       searchHistory: [],
@@ -631,7 +632,12 @@ export default {
 
     // 处理用户菜单可见性变化
     handleUserMenuVisibleChange(visible) {
-      this.userMenuVisible = visible;
+      if (this.menuVisibleTimer) return;
+      this.menuVisibleTimer = setTimeout(() => {
+        this.userMenuVisible = visible;
+        clearTimeout(this.menuVisibleTimer);
+        this.menuVisibleTimer = null;
+      }, 100);
 
       // 如果菜单关闭了，也要清空选择值
       if (!visible) {
