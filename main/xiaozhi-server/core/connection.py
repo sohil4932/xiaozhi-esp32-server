@@ -326,6 +326,14 @@ class ConnectionHandler:
         if isinstance(message, str):
             await handleTextMessage(self, message)
         elif isinstance(message, bytes):
+            # Realtime mode: bypass VAD/ASR and route audio directly to realtime provider
+            if self.use_realtime and self.realtime_provider:
+                try:
+                    await self.realtime_provider.receive_audio(message)
+                except Exception as e:
+                    self.logger.bind(tag=TAG).error(f"Realtime audio handling error: {e}", exc_info=True)
+                return
+
             if self.vad is None or self.asr is None:
                 return
 
@@ -1319,12 +1327,12 @@ class ConnectionHandler:
     async def _check_timeout(self):
         """检查连接超时"""
         try:
-            # Skip timeout check for Realtime mode - OpenAI handles keepalive
-            if self.use_realtime:
-                self.logger.bind(tag=TAG).info("Realtime mode - timeout check disabled")
-                return
-
             while not self.stop_event.is_set():
+                # Check if Realtime mode was enabled (can happen after init)
+                if self.use_realtime:
+                    self.logger.bind(tag=TAG).info("Realtime mode detected - timeout check disabled")
+                    return
+
                 last_activity_time = self.last_activity_time
                 if self.need_bind:
                     last_activity_time = self.first_activity_time

@@ -40,7 +40,7 @@ class HumeConfigManager:
         system_prompt: Optional[str] = None,
         language_model: str = "HUME_AI",
         model_resource: str = "evi-4-mini",
-        evi_version: str = "4"
+        evi_version: str = "FOUR_MINI"
     ) -> Optional[str]:
         """Create a new Hume EVI config with tools
 
@@ -48,9 +48,9 @@ class HumeConfigManager:
             name: Config name
             tools: List of tool definitions from UnifiedToolHandler
             system_prompt: Optional system prompt/instructions
-            language_model: LLM provider (HUME_AI for EVI 4-mini, or ANTHROPIC, OPENAI, GOOGLE for EVI 3)
-            model_resource: Specific model name (evi-4-mini for EVI 4, or claude-3-5-sonnet-latest for EVI 3)
-            evi_version: EVI version (default: "4" for EVI 4-mini)
+            language_model: LLM provider (HUME_AI for built-in model, or ANTHROPIC, OPENAI, GOOGLE for external LLMs)
+            model_resource: Specific model name (evi-4-mini for Hume's built-in model)
+            evi_version: EVI version (default: "FOUR_MINI" for EVI 4-mini model)
 
         Returns:
             config_id if successful, None otherwise
@@ -107,7 +107,7 @@ class HumeConfigManager:
         tools: List[Dict[str, Any]],
         language_model: str = "HUME_AI",
         model_resource: str = "evi-4-mini",
-        evi_version: str = "4"
+        evi_version: str = "FOUR_MINI"
     ) -> bool:
         """Update an existing config with new tools (creates new version)
 

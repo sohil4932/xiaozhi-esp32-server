@@ -22,6 +22,7 @@ def create_instance(provider_type: str, config: dict, conn):
         "openai_realtime": ("core.providers.realtime.openai_realtime", "OpenAIRealtimeProvider"),
         "gemini_live": ("core.providers.realtime.gemini_live", "GeminiLiveProvider"),
         "hume_realtime": ("core.providers.realtime.hume_realtime", "HumeRealtimeProvider"),
+        "elevenlabs_conversational": ("core.providers.realtime.elevenlabs_conversational", "ElevenLabsConversationalProvider"),
     }
 
     if provider_type not in provider_map:

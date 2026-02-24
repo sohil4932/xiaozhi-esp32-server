@@ -173,12 +173,12 @@ export class WebSocketHandler {
 
             // 句子结束时不清除动画，等待下一个句子或最终停止
         } else if (message.state === 'stop') {
-            log('服务器语音传输结束，清空所有音频缓冲', 'info');
+            log('服务器语音传输结束', 'info');
 
-            // 清空所有音频缓冲并停止播放
-            const audioPlayer = getAudioPlayer();
-            audioPlayer.clearAllAudio();
-
+            // In realtime mode (ElevenLabs/realtime agents), audio streams continuously —
+            // do NOT clear the audio buffer on stop, just update UI state.
+            // The browser's streamingContext will naturally drain and stop on its own.
+            // Only clear audio on an actual abort/interruption (handled by abort message).
             this.isRemoteSpeaking = false;
             if (this.onRecordButtonStateChange) {
                 this.onRecordButtonStateChange(false);
@@ -190,8 +190,8 @@ export class WebSocketHandler {
             // 延迟停止Live2D说话动画，确保所有句子都播放完毕
             setTimeout(() => {
                 this.stopLive2DTalking();
-                this.ttsSentenceCount = 0; // 重置计数器
-            }, 1000); // 1秒延迟，确保所有句子都完成
+                this.ttsSentenceCount = 0;
+            }, 1000);
         }
     }
 

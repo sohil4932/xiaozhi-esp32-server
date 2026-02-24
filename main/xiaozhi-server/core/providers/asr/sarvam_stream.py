@@ -215,12 +215,12 @@ class ASRProvider(ASRProviderBase):
                                 logger.bind(tag=TAG).info(f"✅ 手动模式: 用户已停止，处理累积文本 '{self.text}'")
                                 await self.handle_voice_stop(conn, audio_data)
                                 conn.asr_audio.clear()
-                                conn.reset_vad_states()
+                                conn.reset_audio_states()
                                 break
                         else:
                             # Auto mode: process immediately when we have text
                             if transcript:
-                                conn.reset_vad_states()
+                                conn.reset_audio_states()
                                 audio_data = getattr(conn, 'asr_audio_for_voiceprint', [])
                                 logger.bind(tag=TAG).info("自动模式下收到识别结果，触发处理")
                                 await self.handle_voice_stop(conn, audio_data)
@@ -250,7 +250,7 @@ class ASRProvider(ASRProviderBase):
                                         audio_data = getattr(conn, 'asr_audio_for_voiceprint', [])
                                         await self.handle_voice_stop(conn, audio_data)
                                         conn.asr_audio.clear()
-                                        conn.reset_vad_states()
+                                        conn.reset_audio_states()
                                         break
                                     else:
                                         logger.bind(tag=TAG).info("手动模式: 用户已停止但无文本，继续等待")
@@ -269,7 +269,7 @@ class ASRProvider(ASRProviderBase):
                         audio_data = getattr(conn, 'asr_audio_for_voiceprint', [])
                         await self.handle_voice_stop(conn, audio_data)
                         conn.asr_audio.clear()
-                        conn.reset_vad_states()
+                        conn.reset_audio_states()
                         break
                     continue
                 except websockets.ConnectionClosed:

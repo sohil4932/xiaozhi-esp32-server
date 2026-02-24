@@ -787,8 +787,12 @@ class OpenAIRealtimeProvider:
         """
         try:
             if not self.is_connected or not self.ws:
-                logger.bind(tag=TAG).warning(f"Cannot receive audio - connected: {self.is_connected}, ws: {self.ws is not None}")
-                return
+                # Auto-connect if not yet connected
+                logger.bind(tag=TAG).info("Not connected yet, auto-connecting to OpenAI Realtime...")
+                await self.connect()
+                if not self.is_connected or not self.ws:
+                    logger.bind(tag=TAG).warning(f"Cannot receive audio - auto-connect failed")
+                    return
 
             # Skip audio processing if music is playing
             if self.is_music_playing:

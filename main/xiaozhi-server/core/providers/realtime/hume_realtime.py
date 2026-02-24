@@ -26,6 +26,8 @@ import base64
 import asyncio
 import websockets
 import opuslib_next
+import numpy as np
+from scipy import signal
 from typing import Dict, Any, Optional
 from config.logger import setup_logging
 from core.utils.dialogue import Message
@@ -73,17 +75,25 @@ class HumeRealtimeProvider:
         self.temperature = float(temp) if temp else 0.8
 
         # Audio configuration
-        # Hume EVI accepts linear16 PCM at various sample rates
-        # We'll use 16kHz to match ESP32 output
-        self.sample_rate = 16000  # 16kHz matches ESP32
+        # Input: ESP32 sends 16kHz audio → send directly to Hume at 16kHz
+        # Output: Will be determined by Hume's response (likely 24kHz or 48kHz)
+        self.input_sample_rate = 16000   # 16kHz from ESP32
+        self.hume_input_sample_rate = 16000  # Send 16kHz to Hume (no resampling)
+        self.output_sample_rate = 24000  # Target output for ESP32 (24kHz hardware playback)
         self.channels = 1  # Mono
         self.audio_format = "linear16"  # 16-bit PCM
+        self.frame_duration_ms = 60  # 60ms frames
 
-        # Opus decoder for client audio at 16kHz
+        # Frame sizes for different sample rates
+        self.input_frame_size = int(self.input_sample_rate * self.frame_duration_ms / 1000)   # 960 samples @ 16kHz
+        self.hume_input_frame_size = int(self.hume_input_sample_rate * self.frame_duration_ms / 1000)  # 960 samples @ 16kHz
+        self.output_frame_size = int(self.output_sample_rate * self.frame_duration_ms / 1000)  # 1440 samples @ 24kHz
+
+        # Opus decoder for client audio at 16kHz (receiving from ESP32)
         self.opus_decoder = opuslib_next.Decoder(16000, 1)
 
-        # Opus encoder for sending audio to client at 16kHz
-        self.opus_encoder = opuslib_next.Encoder(16000, 1, opuslib_next.APPLICATION_VOIP)
+        # Opus encoder for sending audio to client at 24kHz (sending to ESP32)
+        self.opus_encoder = opuslib_next.Encoder(24000, 1, opuslib_next.APPLICATION_VOIP)
 
         # WebSocket connection
         self.ws = None
@@ -128,7 +138,7 @@ class HumeRealtimeProvider:
 
     def _build_websocket_url(self) -> str:
         """Build Hume EVI WebSocket URL with authentication"""
-        base_url = "wss://api.hume.ai/v0/assistant/chat"
+        base_url = "wss://api.hume.ai/v0/evi/chat"
         params = [f"api_key={self.api_key}"]
 
         if self.config_id:
@@ -213,18 +223,19 @@ class HumeRealtimeProvider:
     async def _configure_session(self):
         """Configure the Hume EVI session with audio settings and instructions"""
         try:
-            # Send session settings for audio format
+            # Send session settings for audio INPUT format (what we send TO Hume)
+            # According to Hume docs, session_settings.audio configures the INPUT format
             session_settings = {
                 "type": "session_settings",
                 "audio": {
                     "encoding": self.audio_format,
-                    "sample_rate": self.sample_rate,
+                    "sample_rate": self.hume_input_sample_rate,  # Tell Hume we're sending 16kHz input
                     "channels": self.channels
                 }
             }
 
             await self.ws.send(json.dumps(session_settings))
-            logger.bind(tag=TAG).info(f"Session configured | Audio: {self.audio_format}@{self.sample_rate}Hz")
+            logger.bind(tag=TAG).info(f"Session configured | Sending to Hume: {self.hume_input_sample_rate}Hz, Target ESP32 output: {self.output_sample_rate}Hz")
 
             # Clear audio buffers to ensure clean session start
             self.pcm_buffer = bytearray()
@@ -238,6 +249,73 @@ class HumeRealtimeProvider:
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Failed to configure session: {e}")
+
+    def _boost_audio_volume(self, pcm_data: bytes, gain_db: float = 6.0, ceiling: float = 0.89) -> bytes:
+        """Boost audio volume with limiting to prevent clipping
+
+        This is critical for Hume audio which is often too quiet.
+        Based on the TypeScript implementation's boostLimitPCM16LEInPlace function.
+
+        Args:
+            pcm_data: PCM16 audio data (16-bit signed integers)
+            gain_db: Gain in decibels (6dB = 2x amplitude)
+            ceiling: Maximum amplitude as fraction of full scale (0.89 = 89% of max)
+
+        Returns:
+            Boosted PCM16 audio data
+        """
+        try:
+            # Convert bytes to int16 numpy array
+            audio_int16 = np.frombuffer(pcm_data, dtype=np.int16)
+
+            # Convert to float for processing (-1.0 to 1.0 range)
+            audio_float = audio_int16.astype(np.float32) / 32768.0
+
+            # Apply gain (dB to linear: gain = 10^(dB/20))
+            linear_gain = 10.0 ** (gain_db / 20.0)
+            audio_float *= linear_gain
+
+            # Apply ceiling limiter (hard limiting)
+            max_amplitude = ceiling
+            audio_float = np.clip(audio_float, -max_amplitude, max_amplitude)
+
+            # Convert back to int16
+            audio_int16_boosted = (audio_float * 32768.0).astype(np.int16)
+
+            return audio_int16_boosted.tobytes()
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Audio boost error: {e}")
+            return pcm_data  # Return original on error
+
+    def _resample_audio(self, pcm_data: bytes, from_rate: int, to_rate: int) -> bytes:
+        """Resample PCM audio from one sample rate to another
+
+        Args:
+            pcm_data: PCM16 audio data
+            from_rate: Source sample rate
+            to_rate: Target sample rate
+
+        Returns:
+            Resampled PCM16 audio data
+        """
+        try:
+            # Convert bytes to int16 numpy array
+            audio_int16 = np.frombuffer(pcm_data, dtype=np.int16)
+
+            # Calculate number of output samples
+            num_samples = int(len(audio_int16) * to_rate / from_rate)
+
+            # Resample using scipy
+            resampled = signal.resample(audio_int16, num_samples)
+
+            # Convert back to int16 and bytes
+            resampled_int16 = np.clip(resampled, -32768, 32767).astype(np.int16)
+            return resampled_int16.tobytes()
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Resampling error: {e}")
+            return pcm_data  # Return original on error
 
     async def _receive_loop(self):
         """Main loop for receiving events from Hume EVI"""
@@ -336,46 +414,147 @@ class HumeRealtimeProvider:
     async def _handle_audio_output(self, event: Dict[str, Any]):
         """Handle audio output from Hume EVI"""
         try:
-            # Mark response as in progress
+            # Mark response as in progress and send TTS signals
             if not self.response_in_progress:
                 self.response_in_progress = True
                 self.response_start_time = 0
+
+                # Send BOTH initial start (enables codec) and sentence_start signals
+                # This is critical - ESP32 needs the initial "start" signal to enable audio playback
+                await self._send_tts_initial_start()
                 await self._send_tts_start()
-                logger.bind(tag=TAG).info("Assistant response started")
+
+                # Reset audio sequence and frame counter
+                self.conn._audio_sequence = 0
+                self.audio_frames_sent = 0
+
+                logger.bind(tag=TAG).info("Assistant response started - sent TTS start signals")
 
             # Get base64 encoded audio data
             audio_data_base64 = event.get("data", "")
             if not audio_data_base64:
+                logger.bind(tag=TAG).warning("Received audio_output event with no data")
                 return
 
             # Decode from base64 to get WAV file
             audio_wav = base64.b64decode(audio_data_base64)
 
-            # Skip WAV header (first 44 bytes) to get raw PCM16 data
-            # WAV header is 44 bytes for standard PCM format
-            pcm_data = audio_wav[44:] if len(audio_wav) > 44 else audio_wav
+            # Parse WAV header to extract actual sample rate and format
+            if len(audio_wav) < 44:
+                logger.bind(tag=TAG).error(f"WAV data too short: {len(audio_wav)} bytes")
+                return
+
+            # Parse WAV header (see http://soundfile.sapp.org/doc/WaveFormat/)
+            # Bytes 22-23: Number of channels (2 bytes, little-endian)
+            # Bytes 24-27: Sample rate (4 bytes, little-endian)
+            # Bytes 34-35: Bits per sample (2 bytes, little-endian)
+            wav_sample_rate = int.from_bytes(audio_wav[24:28], byteorder='little')
+            wav_channels = int.from_bytes(audio_wav[22:24], byteorder='little')
+            wav_bits_per_sample = int.from_bytes(audio_wav[34:36], byteorder='little')
+
+            # Log WAV format info on first chunk
+            if not hasattr(self, '_logged_wav_format'):
+                logger.bind(tag=TAG).info(
+                    f"Hume audio_output WAV format: {wav_sample_rate}Hz, "
+                    f"{wav_channels} channel(s), {wav_bits_per_sample}-bit"
+                )
+                self._logged_wav_format = True
+
+            logger.bind(tag=TAG).debug(
+                f"Received audio chunk: {len(audio_wav)} bytes WAV "
+                f"({wav_sample_rate}Hz, {wav_channels}ch, {wav_bits_per_sample}bit)"
+            )
+
+            # Extract PCM data from WAV (skip header)
+            # WAV header size can vary, but standard PCM is 44 bytes
+            # RIFF header (12 bytes) + fmt chunk (24 bytes) + data chunk header (8 bytes) = 44 bytes
+            header_size = 44
+
+            # Verify we have "data" chunk marker at expected position
+            if len(audio_wav) >= 44:
+                # Check for "data" marker at byte 36 (standard position)
+                data_marker = audio_wav[36:40]
+                if data_marker != b'data':
+                    # Try to find "data" marker if not at standard position
+                    data_pos = audio_wav.find(b'data')
+                    if data_pos != -1:
+                        header_size = data_pos + 8  # "data" + 4 bytes for data size
+                        logger.bind(tag=TAG).debug(f"Non-standard WAV header size: {header_size} bytes")
+
+            pcm_data = audio_wav[header_size:]
+
+            # If Hume sends audio at a different sample rate than expected (24kHz),
+            # we need to resample it
+            if wav_sample_rate != self.output_sample_rate:
+                logger.bind(tag=TAG).warning(
+                    f"Resampling Hume output from {wav_sample_rate}Hz to {self.output_sample_rate}Hz"
+                )
+                pcm_data = self._resample_audio(pcm_data, wav_sample_rate, self.output_sample_rate)
+
+            # Apply volume reduction to prevent echo/feedback with AEC
+            # Hume's audio is often too loud and causes false interruptions with hardware AEC
+            # Reduce by 6dB (half amplitude) to prevent overwhelming the echo canceller
+            if not hasattr(self, '_logged_audio_reduction'):
+                logger.bind(tag=TAG).info("Applying -6dB volume reduction to prevent AEC feedback")
+                self._logged_audio_reduction = True
+
+            # Analyze audio levels before reduction (first chunk only)
+            if not hasattr(self, '_logged_audio_levels'):
+                pcm_int16 = np.frombuffer(pcm_data, dtype=np.int16)
+                rms = np.sqrt(np.mean(pcm_int16.astype(np.float32)**2))
+                peak = np.max(np.abs(pcm_int16))
+                logger.bind(tag=TAG).info(f"Hume audio levels BEFORE reduction: RMS={rms:.1f}, Peak={peak}/32768 ({peak/32768*100:.1f}%)")
+                self._logged_audio_levels = True
+
+            pcm_data = self._boost_audio_volume(pcm_data, gain_db=-6.0, ceiling=1.0)
 
             # Add to buffer
             self.pcm_buffer.extend(pcm_data)
 
-            # Send complete frames to client (960 samples = 60ms at 16kHz)
-            FRAME_SIZE_SAMPLES = 960
-            FRAME_SIZE_BYTES = FRAME_SIZE_SAMPLES * 2  # 16-bit = 2 bytes per sample
+            # Send complete frames to client at 24kHz (1440 samples = 60ms)
+            FRAME_SIZE_BYTES = self.output_frame_size * 2  # 16-bit = 2 bytes per sample
 
             while len(self.pcm_buffer) >= FRAME_SIZE_BYTES:
                 # Extract one frame
                 frame_bytes = bytes(self.pcm_buffer[:FRAME_SIZE_BYTES])
                 self.pcm_buffer = self.pcm_buffer[FRAME_SIZE_BYTES:]
 
-                # Encode to Opus
-                opus_frame = self.opus_encoder.encode(frame_bytes, FRAME_SIZE_SAMPLES)
+                # Log first frame details
+                if self.audio_frames_sent == 0:
+                    logger.bind(tag=TAG).info(
+                        f"Encoding first frame: {len(frame_bytes)} bytes PCM → Opus "
+                        f"(frame_size={self.output_frame_size} samples @ {self.output_sample_rate}Hz)"
+                    )
+
+                # Encode to Opus at 24kHz
+                try:
+                    opus_frame = self.opus_encoder.encode(frame_bytes, self.output_frame_size)
+
+                    if self.audio_frames_sent == 0:
+                        logger.bind(tag=TAG).info(f"First Opus frame encoded: {len(opus_frame)} bytes")
+
+                except Exception as e:
+                    logger.bind(tag=TAG).error(f"Opus encoding failed: {e}")
+                    continue
 
                 # Send to client
                 if self.conn.websocket:
+                    if self.audio_frames_sent == 0:
+                        logger.bind(tag=TAG).info(f"Sending first audio frame ({len(opus_frame)} bytes Opus) to ESP32")
+
                     await self.conn.send_audio_to_client(opus_frame)
                     self.audio_frames_sent += 1
-                    # Pace sending to prevent buffer overflow
-                    await asyncio.sleep(0.050)  # 50ms delay
+
+                    if self.audio_frames_sent == 1:
+                        logger.bind(tag=TAG).info(f"First audio frame sent successfully")
+                    elif self.audio_frames_sent % 10 == 0:
+                        logger.bind(tag=TAG).debug(f"Sent {self.audio_frames_sent} audio frames to device")
+
+                    # Small yield to allow other tasks to run, but don't delay audio
+                    # (60ms frames should be sent as fast as possible to minimize latency)
+                    await asyncio.sleep(0.001)  # 1ms yield instead of 50ms delay
+                else:
+                    logger.bind(tag=TAG).error(f"Cannot send audio - websocket is None!")
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error handling audio output: {e}")
@@ -545,17 +724,16 @@ class HumeRealtimeProvider:
         """Flush any remaining audio in the buffer"""
         try:
             if len(self.pcm_buffer) > 0:
-                FRAME_SIZE_SAMPLES = 960
-                FRAME_SIZE_BYTES = FRAME_SIZE_SAMPLES * 2
+                FRAME_SIZE_BYTES = self.output_frame_size * 2
 
                 # Pad buffer to complete frame size
                 padding_needed = FRAME_SIZE_BYTES - len(self.pcm_buffer)
                 if padding_needed > 0:
                     self.pcm_buffer.extend(bytes(padding_needed))
 
-                # Send the final frame
+                # Send the final frame at 24kHz
                 frame_bytes = bytes(self.pcm_buffer[:FRAME_SIZE_BYTES])
-                opus_frame = self.opus_encoder.encode(frame_bytes, 960)
+                opus_frame = self.opus_encoder.encode(frame_bytes, self.output_frame_size)
 
                 if self.conn.websocket:
                     await self.conn.send_audio_to_client(opus_frame)
@@ -593,11 +771,12 @@ class HumeRealtimeProvider:
 
             # Decode Opus to PCM16 at 16kHz (960 samples = 60ms)
             try:
-                pcm_16khz = self.opus_decoder.decode(audio, 960)
+                pcm_16khz = self.opus_decoder.decode(audio, self.input_frame_size)
             except Exception as e:
                 logger.bind(tag=TAG).error(f"Opus decode error: {e}")
                 return
 
+            # Send 16kHz PCM directly to Hume (no resampling needed)
             # Encode PCM16 to base64 for Hume EVI
             audio_base64 = base64.b64encode(pcm_16khz).decode('utf-8')
 
@@ -612,19 +791,37 @@ class HumeRealtimeProvider:
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error receiving audio: {e}")
 
+    async def _send_tts_initial_start(self):
+        """Send TTS initial start signal to client (enables codec)"""
+        try:
+            if self.conn.websocket:
+                tts_msg = {
+                    "type": "tts",
+                    "state": "start",
+                    "session_id": self.conn.session_id,
+                    "volume_control": 50  # Set volume to 50% to prevent AEC feedback/echo
+                }
+                await self.conn.websocket.send(json.dumps(tts_msg))
+                logger.bind(tag=TAG).info(f"Sent TTS initial start signal with volume_control=50: {tts_msg}")
+            else:
+                logger.bind(tag=TAG).error("Cannot send TTS initial start - websocket is None!")
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error sending TTS initial start: {e}")
+
     async def _send_tts_start(self):
         """Send TTS start signal to client"""
         try:
             if self.conn.websocket:
-                await self.conn.websocket.send(
-                    json.dumps({
-                        "type": "tts",
-                        "state": "sentence_start",
-                        "text": "",
-                        "session_id": self.conn.session_id
-                    })
-                )
-                logger.bind(tag=TAG).debug("Sent TTS start signal to client")
+                tts_msg = {
+                    "type": "tts",
+                    "state": "sentence_start",
+                    "text": "",
+                    "session_id": self.conn.session_id
+                }
+                await self.conn.websocket.send(json.dumps(tts_msg))
+                logger.bind(tag=TAG).info(f"Sent TTS sentence_start signal to client: {tts_msg}")
+            else:
+                logger.bind(tag=TAG).error("Cannot send TTS start - websocket is None!")
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error sending TTS start: {e}")
 
@@ -632,14 +829,15 @@ class HumeRealtimeProvider:
         """Send audio complete signal to client"""
         try:
             if self.conn.websocket:
-                await self.conn.websocket.send(
-                    json.dumps({
-                        "type": "tts",
-                        "state": "stop",
-                        "session_id": self.conn.session_id
-                    })
-                )
-                logger.bind(tag=TAG).debug("Sent TTS stop signal to client")
+                tts_stop_msg = {
+                    "type": "tts",
+                    "state": "stop",
+                    "session_id": self.conn.session_id
+                }
+                await self.conn.websocket.send(json.dumps(tts_stop_msg))
+                logger.bind(tag=TAG).info(f"Sent TTS stop signal to client: {tts_stop_msg}")
+            else:
+                logger.bind(tag=TAG).error("Cannot send TTS stop - websocket is None!")
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error sending audio complete: {e}")
 
@@ -658,6 +856,32 @@ class HumeRealtimeProvider:
                 logger.bind(tag=TAG).debug(f"Sent transcription to client: {text}")
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error sending transcription: {e}")
+
+    async def update_tools(self):
+        """Update Hume config with latest tools (called when device MCP tools become available)
+
+        Note: For Hume EVI, tool configuration is managed through the web console config.
+        Dynamic tool updates are not supported via REST API for existing configs.
+        Users should configure tools in the Hume console when creating the config.
+        """
+        try:
+            if not self.config_id:
+                logger.bind(tag=TAG).warning("Cannot update tools - no config_id available")
+                return
+
+            # Hume configs are managed through web console - tools cannot be dynamically updated
+            # Log the tools for informational purposes only
+            if hasattr(self.conn, 'func_handler') and self.conn.func_handler:
+                tools = self.conn.func_handler.get_functions()
+                tool_names = [t.get("function", {}).get("name") for t in tools]
+                logger.bind(tag=TAG).info(
+                    f"Device MCP tools registered ({len(tools)} tools): {tool_names}. "
+                    f"Note: Hume config {self.config_id} must be updated manually via web console to use new tools."
+                )
+
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Failed to update tools: {e}")
 
     async def cleanup(self):
         """Clean up resources"""

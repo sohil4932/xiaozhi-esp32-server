@@ -220,12 +220,12 @@ class ASRProvider(ASRProviderBase):
                                         logger.bind(tag=TAG).debug("收到最终识别结果，触发处理")
                                         await self.handle_voice_stop(conn, audio_data)
                                         conn.asr_audio.clear()
-                                        conn.reset_vad_states()
+                                        conn.reset_audio_states()
                                     break
                             else:
                                 # Automatic mode - process immediately
                                 self.text = text
-                                conn.reset_vad_states()
+                                conn.reset_audio_states()
                                 audio_data = getattr(conn, 'asr_audio_for_voiceprint', [])
                                 await self.handle_voice_stop(conn, audio_data)
                                 break
@@ -246,11 +246,11 @@ class ASRProvider(ASRProviderBase):
                                     if len(audio_data) > 0:
                                         await self.handle_voice_stop(conn, audio_data)
                                         conn.asr_audio.clear()
-                                        conn.reset_vad_states()
+                                        conn.reset_audio_states()
                                     break
                             else:
                                 self.text = text
-                                conn.reset_vad_states()
+                                conn.reset_audio_states()
                                 audio_data = getattr(conn, 'asr_audio_for_voiceprint', [])
                                 await self.handle_voice_stop(conn, audio_data)
                                 break
