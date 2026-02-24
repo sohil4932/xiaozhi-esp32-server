@@ -179,6 +179,10 @@ def _get_random_play_prompt(song_name):
 
 
 async def play_local_music(conn: "ConnectionHandler", specific_file=None):
+    """Play local music file (placeholder - not implemented)"""
+    pass
+
+
 async def _stream_music_file_realtime(conn, music_path):
     """Stream audio file directly to ESP32 in Realtime mode
 

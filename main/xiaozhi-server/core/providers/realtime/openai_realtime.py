@@ -101,7 +101,8 @@ class OpenAIRealtimeProvider:
         # Audio buffers
         self.audio_queue = asyncio.Queue()
         self.output_audio_buffer = []
-        self.pcm_buffer = bytearray()  # Buffer for accumulating PCM16 samples at 16kHz
+        self.pcm_buffer = bytearray()  # Output buffer (OpenAI → Client) at 16kHz
+        self._input_pcm_buffer_24khz = bytearray()  # Input buffer (Client → OpenAI) at 24kHz for accumulation
 
         # Conversation state
         self.conversation_id = None
@@ -247,6 +248,7 @@ class OpenAIRealtimeProvider:
 
             # Clear audio buffers and reset counters to ensure clean session start
             self.pcm_buffer = bytearray()
+            self._input_pcm_buffer_24khz = bytearray()
             self.audio_frames_sent = 0
             self.audio_frames_received = 0
             # Clear any residual audio in OpenAI's buffer
@@ -829,16 +831,26 @@ class OpenAIRealtimeProvider:
             # Upsample from 16kHz to 24kHz for Realtime API
             pcm_24khz = self._resample_16khz_to_24khz(pcm_16khz)
 
-            # Encode to base64
-            audio_base64 = base64.b64encode(pcm_24khz).decode('utf-8')
+            # Accumulate into buffer - send in larger chunks (60ms = 1440 samples at 24kHz = 2880 bytes)
+            self._input_pcm_buffer_24khz.extend(pcm_24khz)
 
-            # Send to Realtime API
-            message = {
-                "type": "input_audio_buffer.append",
-                "audio": audio_base64
-            }
+            # Send 60ms chunks (1440 samples at 24kHz = 2880 bytes)
+            chunk_size_bytes = 1440 * 2  # 2880 bytes = 60ms at 24kHz
 
-            await self.ws.send(json.dumps(message))
+            while len(self._input_pcm_buffer_24khz) >= chunk_size_bytes:
+                chunk = bytes(self._input_pcm_buffer_24khz[:chunk_size_bytes])
+                self._input_pcm_buffer_24khz = self._input_pcm_buffer_24khz[chunk_size_bytes:]
+
+                # Encode to base64
+                audio_base64 = base64.b64encode(chunk).decode('utf-8')
+
+                # Send to Realtime API
+                message = {
+                    "type": "input_audio_buffer.append",
+                    "audio": audio_base64
+                }
+
+                await self.ws.send(json.dumps(message))
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error receiving audio: {e}")
@@ -988,8 +1000,9 @@ class OpenAIRealtimeProvider:
             self.response_in_progress = False
             self.response_start_time = 0
 
-            # Clear audio buffer and stop TTS playback on client
+            # Clear audio buffers and stop TTS playback on client
             self.pcm_buffer = bytearray()
+            self._input_pcm_buffer_24khz = bytearray()
             await self._send_audio_complete()
 
             # Don't reset client_abort here - let it persist until next response starts
