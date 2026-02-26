@@ -261,35 +261,22 @@ class MemoryProvider(MemoryProviderBase):
                 temperature=0.2,
             )
             json_str = extract_json_data(result)
-            try:
-                result = self.llm.response_no_stream(
-                    short_term_memory_prompt,
-                    msgStr,
-                    max_tokens=2000,
-                    temperature=0.2,
-                )
-                json_str = extract_json_data(result)
-                json.loads(json_str)  # 检查json格式是否正确
-                self.short_memory = json_str
+            json.loads(json_str)  # 检查json格式是否正确
+            self.short_memory = json_str
 
-                # Save to file or API based on configuration
-                if self.save_to_file:
-                    self.save_memory_to_file()
-                    logger.bind(tag=TAG).debug(f"Memory saved to local file successfully")
-                else:
-                    # When using API mode, save to agent's summaryMemory field via device MAC
-                    # Uses PUT /agent/saveMemory/{macAddress} - this is what GUI displays
-                    await save_memory_to_agent(self.role_id, self.short_memory)
-                    logger.bind(tag=TAG).debug(f"Memory saved to agent via API for device: {self.role_id}")
-            except Exception as e:
-                logger.bind(tag=TAG).error(f"Error in saving memory: {e}")
-        else:
-            # 当save_to_file为False时，调用Java端的聊天记录总结接口
-            summary_id = session_id if session_id else self.role_id
-            await generate_and_save_chat_summary(summary_id)
-                logger.bind(tag=TAG).error(f"Failed to parse/save memory JSON: {e}")
+            # Save to file or API based on configuration
+            if self.save_to_file:
+                self.save_memory_to_file()
+                logger.bind(tag=TAG).debug(f"Memory saved to local file successfully")
+            else:
+                # When using API mode, save to agent's summaryMemory field via device MAC
+                # Uses PUT /agent/saveMemory/{macAddress} - this is what GUI displays
+                await save_memory_to_agent(self.role_id, self.short_memory)
+                logger.bind(tag=TAG).debug(f"Memory saved to agent via API for device: {self.role_id}")
+
         except Exception as e:
             logger.bind(tag=TAG).error(f"Failed to generate memory summary: {e}")
+
         logger.bind(tag=TAG).info(
             f"Save memory successful - Role: {self.role_id}, Session: {session_id}"
         )

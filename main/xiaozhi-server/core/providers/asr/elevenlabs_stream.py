@@ -57,6 +57,11 @@ class ASRProvider(ASRProviderBase):
         self.delete_audio_file = delete_audio_file
         self.session_id = None
 
+        # Audio debugging - dump received audio to files
+        self.debug_audio_enabled = False  # Disable audio dumping (set to True for debugging)
+        self.debug_pcm_buffer = bytearray()  # Buffer for decoded PCM data at 16kHz
+        self.debug_audio_start_time = None
+
         logger.bind(tag=TAG).info(f"ElevenLabs ASR initialized | Model: {self.model} | Language: {self.language}")
 
     async def open_audio_channels(self, conn):
@@ -99,6 +104,20 @@ class ASRProvider(ASRProviderBase):
             try:
                 # Decode Opus to PCM16
                 pcm_frame = self.decoder.decode(audio, 960)
+
+                # Debug: Save received PCM audio to buffer
+                if self.debug_audio_enabled:
+                    import time
+                    if self.debug_audio_start_time is None:
+                        self.debug_audio_start_time = time.time()
+                    self.debug_pcm_buffer.extend(pcm_frame)
+
+                    # Save to WAV file every 5 seconds of audio (16000 samples/sec * 2 bytes * 5 sec = 160000 bytes)
+                    if len(self.debug_pcm_buffer) >= 160000:
+                        # Save in background to avoid blocking audio pipeline
+                        buffer_copy = bytes(self.debug_pcm_buffer)
+                        self.debug_pcm_buffer = bytearray()
+                        asyncio.create_task(self._save_debug_audio(buffer_copy))
 
                 # ElevenLabs STT expects base64-encoded PCM in specific format
                 import base64
@@ -283,6 +302,40 @@ class ASRProvider(ASRProviderBase):
                 if hasattr(conn, 'asr_audio'):
                     conn.asr_audio = []
 
+    async def _save_debug_audio(self, audio_data: bytes):
+        """Save debug audio buffer to WAV file in background
+
+        Args:
+            audio_data: PCM16 audio data at 16kHz to save
+        """
+        try:
+            import wave
+            import os
+            from datetime import datetime
+
+            # Create debug directory if it doesn't exist
+            debug_dir = "/tmp/audio_debug"
+            os.makedirs(debug_dir, exist_ok=True)
+
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{debug_dir}/elevenlabs_asr_input_{timestamp}.wav"
+
+            # Write WAV file
+            with wave.open(filename, 'wb') as wf:
+                wf.setnchannels(1)  # Mono
+                wf.setsampwidth(2)  # 16-bit = 2 bytes
+                wf.setframerate(16000)  # 16kHz
+                wf.writeframes(audio_data)
+
+            duration = len(audio_data) / (16000 * 2)  # bytes / (samples_per_sec * bytes_per_sample)
+            logger.bind(tag=TAG).info(
+                f"Saved debug audio: {filename} ({duration:.2f} seconds, {len(audio_data)} bytes)"
+            )
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error saving debug audio: {e}")
+
     async def _cleanup(self, conn=None):
         """Cleanup resources"""
         logger.bind(tag=TAG).debug(f"开始ASR会话清理 | 当前状态: processing={self.is_processing}, server_ready={self.server_ready}")
@@ -290,6 +343,8 @@ class ASRProvider(ASRProviderBase):
         # Reset state
         self.is_processing = False
         self.server_ready = False
+        self.debug_pcm_buffer = bytearray()
+        self.debug_audio_start_time = None
         logger.bind(tag=TAG).debug("ASR状态已重置")
 
         # Close connection
@@ -328,7 +383,7 @@ class ASRProvider(ASRProviderBase):
             except Exception as e:
                 logger.bind(tag=TAG).error(f"发送停止请求失败: {e}")
 
-    async def speech_to_text(self, opus_data, session_id, audio_format):
+    async def speech_to_text(self, opus_data, session_id, audio_format="opus", artifacts=None):
         """Get recognition result"""
         result = self.text
         self.text = ""

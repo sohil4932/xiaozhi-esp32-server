@@ -127,6 +127,7 @@ class ElevenLabsConversationalProvider:
         self.audio_session_started = False  # True after first tts start sent to client
         self.audio_frames_sent = 0
         self.audio_frames_received = 0
+        self.audio_output_blocked = False  # Block audio output after interruption until next response
 
         # Keepalive tracking
         import time
@@ -315,13 +316,34 @@ class ElevenLabsConversationalProvider:
         self.last_activity_time = time.time()
         self.conn.last_activity_time = self.last_activity_time * 1000
 
+        # Check if client has pressed abort button - this should disconnect/stop the session
+        if hasattr(self.conn, 'client_abort') and self.conn.client_abort:
+            logger.bind(tag=TAG).info("Client abort detected - stopping session")
+            # Block audio output completely
+            self.audio_output_blocked = True
+            # Clear output buffer to stop sending audio
+            self._output_pcm_buffer = b""
+            # Clear input buffer to stop sending to ElevenLabs
+            self._input_pcm_buffer = b""
+            # Reset audio session
+            self.audio_session_started = False
+            self.audio_frames_sent = 0
+            # Send TTS stop to ESP32 to halt playback immediately
+            await self._send_tts_stop()
+            # Reset abort flag immediately after handling
+            self.conn.client_abort = False
+            # Don't process any more events until user speaks again
+            return  # Skip processing this event
+
         event_type = event.get("type")
 
         # Log event type only (full event details excluded for ping and audio to reduce noise)
-        if event_type not in ("ping", "audio"):
-            logger.bind(tag=TAG).info(f"Received ElevenLabs event: {event_type} | Full event: {event}")
-        else:
+        if event_type == "ping":
             logger.bind(tag=TAG).debug(f"Received ElevenLabs event: {event_type}")
+        elif event_type == "audio":
+            pass  # Don't log every audio event
+        else:
+            logger.bind(tag=TAG).info(f"Received ElevenLabs event: {event_type} | Full event: {event}")
 
         if event_type == "conversation_initiation_metadata":
             await self._handle_conversation_init(event)
@@ -427,7 +449,18 @@ class ElevenLabsConversationalProvider:
             response = response_event.get("agent_response", "")
 
             if response:
+                # Unblock audio output for new response (after interruption)
+                if self.audio_output_blocked:
+                    logger.bind(tag=TAG).info("Unblocking audio output for new agent response")
+                    self.audio_output_blocked = False
+
                 logger.bind(tag=TAG).info(f"Agent said: {response}")
+
+                # Check if agent wants to end the call
+                if "[end_call]" in response.lower() or "[end call]" in response.lower():
+                    logger.bind(tag=TAG).info("Agent requested end_call - will disconnect after audio completes")
+                    # Set flag to disconnect after audio finishes playing
+                    self.conn.close_after_chat = True
 
                 # Save to dialogue for memory system
                 if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
@@ -435,6 +468,9 @@ class ElevenLabsConversationalProvider:
 
                 # Report to management API chat history
                 enqueue_tts_report(self.conn, response, None)
+
+                # Send transcription to ESP32 for display (same as OpenAI Realtime)
+                await self._send_transcription_to_client(response)
 
                 # Flush any partially-accumulated PCM from the output buffer
                 await self._send_audio_complete()
@@ -453,15 +489,29 @@ class ElevenLabsConversationalProvider:
     async def _handle_interruption(self, event: Dict[str, Any]):
         """Handle user interruption — ElevenLabs stops generating, we clear our PCM buffer"""
         try:
-            logger.bind(tag=TAG).info("User interruption detected")
+            logger.bind(tag=TAG).info("User interruption detected - stopping audio playback")
+            # Block all audio output until next agent response starts
+            self.audio_output_blocked = True
             # Discard any partially accumulated PCM
             self._output_pcm_buffer = b""
-            logger.bind(tag=TAG).debug("PCM output buffer cleared on interruption")
+            # Reset audio session so next audio starts fresh
+            self.audio_session_started = False
+            self.audio_frames_sent = 0
+            # Send TTS stop to ESP32 to halt playback immediately
+            await self._send_tts_stop()
+            logger.bind(tag=TAG).info("Audio playback stopped and buffers cleared")
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error handling interruption: {e}")
 
     async def _handle_client_tool_call(self, event: Dict[str, Any]):
         """Handle client tool call request from ElevenLabs
+
+        IMPORTANT: Client tools must be configured in the ElevenLabs agent dashboard.
+        Unlike OpenAI Realtime which accepts tools dynamically, ElevenLabs requires:
+        1. Go to https://elevenlabs.io/app/conversational-ai
+        2. Edit your agent
+        3. Add Client Tools with matching names (e.g., "self_audio_speaker_set_volume")
+        4. The agent will then send client_tool_call events during conversation
 
         Event format:
         {
@@ -581,6 +631,10 @@ class ElevenLabsConversationalProvider:
             audio_data: PCM16LE audio data at 24kHz from ElevenLabs
         """
         try:
+            # Block audio output if interrupted (until next agent response)
+            if self.audio_output_blocked:
+                return
+
             # Send tts start once per session (not per utterance) to init ESP32 decoder
             if not self.audio_session_started:
                 self.audio_session_started = True
@@ -596,14 +650,25 @@ class ElevenLabsConversationalProvider:
             bytes_per_frame = self.output_frame_size * 2  # 2880 bytes at 24kHz (60ms * 24000Hz * 2 bytes)
 
             while len(self._output_pcm_buffer) >= bytes_per_frame:
+                # Check if client pressed abort button - stop sending audio immediately
+                if hasattr(self.conn, 'client_abort') and self.conn.client_abort:
+                    logger.bind(tag=TAG).info("Client abort detected during audio streaming - stopping")
+                    self._output_pcm_buffer = b""  # Clear buffer
+                    break
+
                 frame_bytes = self._output_pcm_buffer[:bytes_per_frame]
                 self._output_pcm_buffer = self._output_pcm_buffer[bytes_per_frame:]
 
                 try:
                     opus_frame = self.opus_encoder.encode(frame_bytes, self.output_frame_size)
                     if self.conn.websocket:
-                        await self._do_send_opus(opus_frame)
+                        # Send to client (handles MQTT gateway header automatically)
+                        await self.conn.send_audio_to_client(opus_frame)
                         self.audio_frames_sent += 1
+
+                        # Pace sending to prevent network buffer overflow
+                        # Each frame = 60ms audio, delay slightly less to allow buffering
+                        await asyncio.sleep(0.050)
                 except Exception as e:
                     logger.bind(tag=TAG).error(f"Opus encoding/send failed: {e}")
 
@@ -644,78 +709,39 @@ class ElevenLabsConversationalProvider:
             if self.is_music_playing:
                 return
 
+            # Skip if audio output is blocked (after abort until new user speech starts conversation)
+            if self.audio_output_blocked:
+                # User is speaking - unblock to allow new conversation
+                logger.bind(tag=TAG).info("User speaking detected - unblocking audio after abort")
+                self.audio_output_blocked = False
+
             # Update activity timestamp
             import time
             self.last_activity_time = time.time()
             self.conn.last_activity_time = self.last_activity_time * 1000
 
-            # Log every 50th frame
-            self.audio_frames_received += 1
-            if self.audio_frames_received % 50 == 0:
-                logger.bind(tag=TAG).info(f"Received {self.audio_frames_received} audio frames from client")
-
-            # ESP32 sends small Opus frames (10ms each). Each Opus frame must be decoded separately
-            # (can't concatenate Opus frames - each has its own header). Instead, we decode each
-            # frame individually and accumulate the PCM output to create 60ms chunks.
-
-            # Decode this Opus frame to PCM16 at 16kHz
+            # Decode Opus to PCM16 at 16kHz (same as OpenAI Realtime working approach)
+            # Frame size for 16kHz at 60ms = 960 samples
             try:
-                pcm_16khz = self.opus_decoder.decode(audio, self.input_frame_size)
+                pcm_16khz = self.opus_decoder.decode(audio, 960)
             except Exception as e:
-                logger.bind(tag=TAG).error(f"Opus decode error: {e} | opus_len={len(audio)}B")
+                logger.bind(tag=TAG).error(f"Opus decode error: {e} | Opus size: {len(audio)} bytes")
                 return
 
-            if len(pcm_16khz) == 0:
-                logger.bind(tag=TAG).warning(f"Opus decoder returned empty PCM | opus_len={len(audio)}B")
-                return
-
-            # Log decoded PCM stats on first 5 frames
-            if self.audio_frames_received <= 5:
-                import numpy as np
-                samples = np.frombuffer(pcm_16khz, dtype=np.int16)
-                logger.bind(tag=TAG).info(
-                    f"Frame #{self.audio_frames_received}: opus_in={len(audio)}B → pcm_out={len(pcm_16khz)}B ({len(samples)} samples), "
-                    f"audio_range=[{samples.min()}, {samples.max()}]"
-                )
-
-            # Accumulate PCM into buffer, send in 60ms (960 sample = 1920 byte) chunks at 16kHz
-            # This matches the working HTML test page frame size
+            # Accumulate PCM into buffer (no resampling needed - ElevenLabs uses 16kHz)
             self._input_pcm_buffer += pcm_16khz
-            chunk_bytes = self.elevenlabs_chunk_samples * 2  # 1920 bytes per 60ms chunk at 16kHz
 
-            # Log pipeline info on first chunk sent
-            if not hasattr(self, '_first_chunk_logged'):
-                self._first_chunk_logged = False
+            # Send in 60ms chunks (960 samples at 16kHz = 1920 bytes)
+            chunk_size_bytes = 960 * 2  # 1920 bytes = 60ms at 16kHz
 
-            if not self._first_chunk_logged and len(self._input_pcm_buffer) >= chunk_bytes:
-                logger.bind(tag=TAG).info(
-                    f"Input audio pipeline: decode each 10ms Opus frame → accumulate PCM → "
-                    f"send {chunk_bytes}B (60ms) chunks to ElevenLabs"
-                )
-                self._first_chunk_logged = True
+            while len(self._input_pcm_buffer) >= chunk_size_bytes:
+                chunk = self._input_pcm_buffer[:chunk_size_bytes]
+                self._input_pcm_buffer = self._input_pcm_buffer[chunk_size_bytes:]
 
-            # Initialize chunk counter if not exists
-            if not hasattr(self, '_chunks_sent_to_elevenlabs'):
-                self._chunks_sent_to_elevenlabs = 0
-
-            while len(self._input_pcm_buffer) >= chunk_bytes:
-                chunk = self._input_pcm_buffer[:chunk_bytes]
-                self._input_pcm_buffer = self._input_pcm_buffer[chunk_bytes:]
-
-                # Log audio stats for first few chunks
-                if self._chunks_sent_to_elevenlabs < 3:
-                    import numpy as np
-                    samples = np.frombuffer(chunk, dtype=np.int16)
-                    logger.bind(tag=TAG).info(
-                        f"Chunk #{self._chunks_sent_to_elevenlabs + 1}: {len(chunk)}B ({len(samples)} samples), "
-                        f"range=[{samples.min()}, {samples.max()}], mean={samples.mean():.1f}, "
-                        f"std={samples.std():.1f}, rms={np.sqrt(np.mean(samples.astype(np.float32)**2)):.1f}"
-                    )
-
+                # Encode to base64
                 audio_b64 = base64.b64encode(chunk).decode("utf-8")
 
-                # Send audio chunk to ElevenLabs Conversational AI
-                # Using same PCM16 base64 format that works for ElevenLabs STT
+                # Send audio chunk to ElevenLabs
                 try:
                     message = {
                         "user_audio_chunk": audio_b64
@@ -724,28 +750,6 @@ class ElevenLabsConversationalProvider:
                 except Exception as e:
                     logger.bind(tag=TAG).error(f"Failed to send audio chunk to ElevenLabs: {e}")
                     return
-
-                self._chunks_sent_to_elevenlabs += 1
-                if self._chunks_sent_to_elevenlabs == 1:
-                    # Log first message details for debugging
-                    import numpy as np
-                    first_samples = np.frombuffer(chunk[:40], dtype=np.int16)  # First 20 samples
-                    logger.bind(tag=TAG).info(
-                        f"Sent first audio chunk to ElevenLabs - waiting for response... "
-                        f"(chunk_size={len(chunk)}B, base64_len={len(audio_b64)} chars)"
-                    )
-                    logger.bind(tag=TAG).info(
-                        f"First 20 PCM samples: {first_samples.tolist()}"
-                    )
-                    logger.bind(tag=TAG).info(
-                        f"First message JSON preview: {{\"user_audio_chunk\": \"{audio_b64[:50]}...\"}} "
-                        f"(showing first 50 chars of {len(audio_b64)} total)"
-                    )
-                elif self._chunks_sent_to_elevenlabs % 10 == 0:
-                    logger.bind(tag=TAG).info(
-                        f"Sent {self._chunks_sent_to_elevenlabs} audio chunks to ElevenLabs "
-                        f"({self._chunks_sent_to_elevenlabs * 60}ms of audio)"
-                    )
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error receiving audio: {e}")
@@ -824,6 +828,21 @@ class ElevenLabsConversationalProvider:
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error sending TTS start: {e}")
 
+    async def _send_tts_stop(self):
+        """Send TTS stop signal to ESP32 to halt playback immediately"""
+        try:
+            if self.conn.websocket:
+                await self.conn.websocket.send(
+                    json.dumps({
+                        "type": "tts",
+                        "state": "stop",
+                        "session_id": self.conn.session_id
+                    })
+                )
+                logger.bind(tag=TAG).debug("Sent TTS stop signal")
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error sending TTS stop: {e}")
+
     async def _send_audio_complete(self):
         """Flush any remaining PCM as a final padded Opus frame and send it immediately."""
         try:
@@ -841,6 +860,14 @@ class ElevenLabsConversationalProvider:
                         pass
                 self._output_pcm_buffer = b""
             logger.bind(tag=TAG).debug(f"Audio flush complete — total frames sent: {self.audio_frames_sent}")
+
+            # Check if we should close connection after audio completes (e.g., from [end_call])
+            if hasattr(self.conn, 'close_after_chat') and self.conn.close_after_chat:
+                logger.bind(tag=TAG).info("Closing connection after audio as requested by agent [end_call]")
+                # Give a moment for final audio frame to be sent/played
+                await asyncio.sleep(0.5)
+                await self.conn.close()
+
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error in _send_audio_complete: {e}")
 
@@ -931,8 +958,14 @@ class ElevenLabsConversationalProvider:
             logger.bind(tag=TAG).error(f"Failed to log tools: {e}")
 
     async def cleanup(self):
-        """Clean up resources"""
+        """Clean up resources and disconnect"""
         try:
+            # Send TTS stop to ESP32 before closing (in case audio is playing)
+            try:
+                await self._send_tts_stop()
+            except Exception:
+                pass  # Best effort
+
             self.is_connected = False
 
             # Cancel receive task

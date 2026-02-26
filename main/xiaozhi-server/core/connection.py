@@ -326,10 +326,31 @@ class ConnectionHandler:
         if isinstance(message, str):
             await handleTextMessage(self, message)
         elif isinstance(message, bytes):
+            # Strip MQTT gateway header if present (must do this BEFORE routing to realtime/ASR)
+            audio_data = message
+            if self.conn_from_mqtt_gateway and len(message) >= 16:
+                # Extract audio data from MQTT message (strip 16-byte header)
+                audio_length = int.from_bytes(message[12:16], "big")
+                if audio_length > 0 and len(message) >= 16 + audio_length:
+                    audio_data = message[16 : 16 + audio_length]
+                elif len(message) > 16:
+                    audio_data = message[16:]
+                else:
+                    # Invalid message, skip
+                    return
+
+                # Log header stripping for debugging (first message only)
+                if not hasattr(self, '_mqtt_header_strip_logged'):
+                    self._mqtt_header_strip_logged = True
+                    self.logger.bind(tag=TAG).info(
+                        f"MQTT header stripped: total_size={len(message)}, "
+                        f"audio_length={audio_length}, audio_data_size={len(audio_data)}"
+                    )
+
             # Realtime mode: bypass VAD/ASR and route audio directly to realtime provider
             if self.use_realtime and self.realtime_provider:
                 try:
-                    await self.realtime_provider.receive_audio(message)
+                    await self.realtime_provider.receive_audio(audio_data)
                 except Exception as e:
                     self.logger.bind(tag=TAG).error(f"Realtime audio handling error: {e}", exc_info=True)
                 return
@@ -337,14 +358,8 @@ class ConnectionHandler:
             if self.vad is None or self.asr is None:
                 return
 
-            # 处理来自MQTT网关的音频包
-            if self.conn_from_mqtt_gateway and len(message) >= 16:
-                handled = await self._process_mqtt_audio_message(message)
-                if handled:
-                    return
-
-            # 不需要头部处理或没有头部时，直接处理原始消息
-            self.asr_audio_queue.put(message)
+            # For regular ASR, put audio in queue
+            self.asr_audio_queue.put(audio_data)
 
     async def _process_mqtt_audio_message(self, message):
         """

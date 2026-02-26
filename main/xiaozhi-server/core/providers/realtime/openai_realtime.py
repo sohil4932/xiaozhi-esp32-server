@@ -110,6 +110,11 @@ class OpenAIRealtimeProvider:
         self.audio_frames_sent = 0  # Track audio frames sent to device
         self.audio_frames_received = 0  # Track audio frames received from client
 
+        # Audio debugging - dump received audio to files
+        self.debug_audio_enabled = False  # Disable audio dumping (set to True for debugging)
+        self.debug_pcm_buffer = bytearray()  # Buffer for decoded PCM data at 16kHz
+        self.debug_audio_start_time = None
+
         # Keepalive tracking
         import time
         self.last_activity_time = time.time()  # Track last message received
@@ -249,6 +254,8 @@ class OpenAIRealtimeProvider:
             # Clear audio buffers and reset counters to ensure clean session start
             self.pcm_buffer = bytearray()
             self._input_pcm_buffer_24khz = bytearray()
+            self.debug_pcm_buffer = bytearray()
+            self.debug_audio_start_time = None
             self.audio_frames_sent = 0
             self.audio_frames_received = 0
             # Clear any residual audio in OpenAI's buffer
@@ -808,14 +815,18 @@ class OpenAIRealtimeProvider:
             # Log every 50th frame to avoid spam
             self.audio_frames_received += 1
             if self.audio_frames_received % 50 == 0:
-                logger.bind(tag=TAG).info(f"Received {self.audio_frames_received} audio frames from client")
+                logger.bind(tag=TAG).info(f"Received {self.audio_frames_received} audio frames from client | Opus size: {len(audio)} bytes")
+
+            # Log first few frames to understand Opus frame size
+            if self.audio_frames_received <= 5:
+                logger.bind(tag=TAG).info(f"Frame #{self.audio_frames_received}: Opus size = {len(audio)} bytes")
 
             # Decode Opus to PCM16 at 16kHz
             # Frame size for 16kHz at 60ms = 960 samples
             try:
                 pcm_16khz = self.opus_decoder.decode(audio, 960)
             except Exception as e:
-                logger.bind(tag=TAG).error(f"Opus decode error: {e}")
+                logger.bind(tag=TAG).error(f"Opus decode error: {e} | Opus size: {len(audio)} bytes")
                 return
 
             # Log audio stats for debugging (every 100th frame)
@@ -827,6 +838,19 @@ class OpenAIRealtimeProvider:
                     f"min: {samples.min()}, max: {samples.max()}, "
                     f"mean: {samples.mean():.2f}, std: {samples.std():.2f}"
                 )
+
+            # Debug: Save received PCM audio to buffer
+            if self.debug_audio_enabled:
+                if self.debug_audio_start_time is None:
+                    self.debug_audio_start_time = time.time()
+                self.debug_pcm_buffer.extend(pcm_16khz)
+
+                # Save to WAV file every 5 seconds of audio (16000 samples/sec * 2 bytes * 5 sec = 160000 bytes)
+                if len(self.debug_pcm_buffer) >= 160000:
+                    # Save in background to avoid blocking audio pipeline
+                    buffer_copy = bytes(self.debug_pcm_buffer)
+                    self.debug_pcm_buffer = bytearray()
+                    asyncio.create_task(self._save_debug_audio(buffer_copy))
 
             # Upsample from 16kHz to 24kHz for Realtime API
             pcm_24khz = self._resample_16khz_to_24khz(pcm_16khz)
@@ -854,6 +878,40 @@ class OpenAIRealtimeProvider:
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error receiving audio: {e}")
+
+    async def _save_debug_audio(self, audio_data: bytes):
+        """Save debug audio buffer to WAV file in background
+
+        Args:
+            audio_data: PCM16 audio data at 16kHz to save
+        """
+        try:
+            import wave
+            import os
+            from datetime import datetime
+
+            # Create debug directory if it doesn't exist
+            debug_dir = "/tmp/audio_debug"
+            os.makedirs(debug_dir, exist_ok=True)
+
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{debug_dir}/openai_input_{timestamp}.wav"
+
+            # Write WAV file
+            with wave.open(filename, 'wb') as wf:
+                wf.setnchannels(1)  # Mono
+                wf.setsampwidth(2)  # 16-bit = 2 bytes
+                wf.setframerate(16000)  # 16kHz
+                wf.writeframes(audio_data)
+
+            duration = len(audio_data) / (16000 * 2)  # bytes / (samples_per_sec * bytes_per_sample)
+            logger.bind(tag=TAG).info(
+                f"Saved debug audio: {filename} ({duration:.2f} seconds, {len(audio_data)} bytes)"
+            )
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error saving debug audio: {e}")
 
     def _resample_16khz_to_24khz(self, pcm_16khz: bytes) -> bytes:
         """Upsample PCM audio from 16kHz to 24kHz
@@ -1003,6 +1061,8 @@ class OpenAIRealtimeProvider:
             # Clear audio buffers and stop TTS playback on client
             self.pcm_buffer = bytearray()
             self._input_pcm_buffer_24khz = bytearray()
+            self.debug_pcm_buffer = bytearray()
+            self.debug_audio_start_time = None
             await self._send_audio_complete()
 
             # Don't reset client_abort here - let it persist until next response starts
