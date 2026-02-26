@@ -119,6 +119,7 @@ class ElevenLabsConversationalProvider:
         self.is_ready = False  # True only after conversation_initiation_metadata received
         self.is_processing = False
         self.is_music_playing = False
+        self.intentional_disconnect = False  # True when user/agent requests disconnect (prevents auto-reconnect)
 
         # Tasks
         self.receive_task = None
@@ -456,11 +457,14 @@ class ElevenLabsConversationalProvider:
 
                 logger.bind(tag=TAG).info(f"Agent said: {response}")
 
-                # Check if agent wants to end the call
-                if "[end_call]" in response.lower() or "[end call]" in response.lower():
-                    logger.bind(tag=TAG).info("Agent requested end_call - will disconnect after audio completes")
+                # Check if agent wants to end the call (various formats)
+                response_lower = response.lower()
+                end_call_markers = ["[end_call]", "[end call]", "bye-bye!", "goodbye!", "see you next time, bye"]
+                if any(marker in response_lower for marker in end_call_markers):
+                    logger.bind(tag=TAG).info("Agent indicated conversation end - will disconnect after audio completes")
                     # Set flag to disconnect after audio finishes playing
                     self.conn.close_after_chat = True
+                    self.intentional_disconnect = True
 
                 # Save to dialogue for memory system
                 if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
@@ -516,15 +520,21 @@ class ElevenLabsConversationalProvider:
         Event format:
         {
             "type": "client_tool_call",
-            "tool_call_id": "call_xyz123",
-            "tool_name": "self_audio_speaker_set_volume",
-            "parameters": {"volume": 75}
+            "client_tool_call": {
+                "tool_call_id": "call_xyz123",
+                "tool_name": "self_audio_speaker_set_volume",
+                "parameters": {"volume": 75},
+                "event_id": 123,
+                "expects_response": true
+            }
         }
         """
         try:
-            tool_call_id = event.get("tool_call_id")
-            tool_name = event.get("tool_name")
-            parameters = event.get("parameters", {})
+            # Extract from nested client_tool_call object
+            tool_call_data = event.get("client_tool_call", {})
+            tool_call_id = tool_call_data.get("tool_call_id")
+            tool_name = tool_call_data.get("tool_name")
+            parameters = tool_call_data.get("parameters", {})
 
             logger.bind(tag=TAG).info(f"Client tool call: {tool_name} | ID: {tool_call_id}")
 
@@ -560,16 +570,18 @@ class ElevenLabsConversationalProvider:
             else:
                 output = str(result)
 
-            # Send tool result
+            # Send tool result (per ElevenLabs protocol)
             message = {
                 "type": "client_tool_result",
-                "tool_call_id": tool_call_id,
-                "output": output,
-                "is_error": False
+                "client_tool_result": {
+                    "tool_call_id": tool_call_id,
+                    "result": output,
+                    "is_error": False
+                }
             }
 
             await self._ws_send(json.dumps(message))
-            logger.bind(tag=TAG).info(f"Client tool result sent | ID: {tool_call_id} | Tool: {tool_name}")
+            logger.bind(tag=TAG).info(f"Client tool result sent | ID: {tool_call_id} | Tool: {tool_name} | Result: {output}")
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error sending client tool result: {e}")
@@ -579,9 +591,11 @@ class ElevenLabsConversationalProvider:
         try:
             message = {
                 "type": "client_tool_result",
-                "tool_call_id": tool_call_id,
-                "output": f"Error: {error}",
-                "is_error": True
+                "client_tool_result": {
+                    "tool_call_id": tool_call_id,
+                    "result": f"Error: {error}",
+                    "is_error": True
+                }
             }
 
             await self._ws_send(json.dumps(message))
@@ -694,6 +708,10 @@ class ElevenLabsConversationalProvider:
         """
         try:
             if not self.is_connected or not self.ws:
+                # Don't auto-reconnect if this was an intentional disconnect (abort/end_call)
+                if self.intentional_disconnect:
+                    return
+
                 # Auto-connect if not yet connected
                 logger.bind(tag=TAG).info("Not connected yet, auto-connecting to ElevenLabs...")
                 success = await self.connect()
@@ -960,6 +978,9 @@ class ElevenLabsConversationalProvider:
     async def cleanup(self):
         """Clean up resources and disconnect"""
         try:
+            # Mark as intentional disconnect to prevent auto-reconnect
+            self.intentional_disconnect = True
+
             # Send TTS stop to ESP32 before closing (in case audio is playing)
             try:
                 await self._send_tts_stop()
