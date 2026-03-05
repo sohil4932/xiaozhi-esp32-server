@@ -87,7 +87,7 @@ class ConnectionHandler:
         self.max_output_size = 0
         self.chat_history_conf = 0
         self.audio_format = "opus"
-        self.sample_rate = 24000  # 默认采样率，从客户端 hello 消息中动态更新
+        self.sample_rate = 24000  # 默认采样率，从客���端 hello 消息中动态更新
 
         # 客户端状态相关
         self.client_abort = False
@@ -538,15 +538,26 @@ class ConnectionHandler:
     def _init_report_threads(self):
         """初始化ASR和TTS上报线程"""
         if not self.read_config_from_api or self.need_bind:
+            self.logger.bind(tag=TAG).debug(
+                f"上报线程未启动: read_config_from_api={self.read_config_from_api}, need_bind={self.need_bind}"
+            )
             return
         if self.chat_history_conf == 0:
+            self.logger.bind(tag=TAG).debug(f"上报线程未启动: chat_history_conf={self.chat_history_conf}")
             return
+
+        # Enable ASR and TTS reporting (these flags control enqueue_asr_report and enqueue_tts_report)
+        self.report_asr_enable = True
+        self.report_tts_enable = True
+
         if self.report_thread is None or not self.report_thread.is_alive():
             self.report_thread = threading.Thread(
                 target=self._report_worker, daemon=True
             )
             self.report_thread.start()
             self.logger.bind(tag=TAG).info("TTS上报线程已启动")
+        else:
+            self.logger.bind(tag=TAG).debug("上报线程已经在运行")
 
     def _initialize_tts(self):
         """初始化TTS"""
@@ -760,6 +771,18 @@ class ConnectionHandler:
                     self
                 )
                 self.logger.bind(tag=TAG).success(f"Realtime provider initialized: {select_realtime_module}")
+
+                # Initialize voiceprint for Realtime mode
+                self._initialize_voiceprint()
+
+                # Enable voiceprint in realtime provider if available
+                if self.voiceprint_provider and hasattr(self.realtime_provider, 'voiceprint_enabled'):
+                    self.realtime_provider.voiceprint_enabled = True
+                    self.logger.bind(tag=TAG).info("Voiceprint enabled in Realtime provider")
+
+                # Initialize report threads for Realtime mode (needed for chat history)
+                self._init_report_threads()
+
             except Exception as e:
                 self.logger.bind(tag=TAG).error(f"Failed to initialize Realtime provider: {e}")
                 self.use_realtime = False

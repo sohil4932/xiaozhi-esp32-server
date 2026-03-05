@@ -105,9 +105,20 @@ def opus_to_wav(conn: "ConnectionHandler", opus_data):
 
 
 def enqueue_tts_report(conn: "ConnectionHandler", text, opus_data):
+    # Entry point logging - this should ALWAYS appear if function is called
+    conn.logger.bind(tag=TAG).info(
+        f"🔍 enqueue_tts_report CALLED: text='{text[:50] if text else None}...', "
+        f"opus_data={opus_data is not None}, report_tts_enable={conn.report_tts_enable}"
+    )
+
     if not conn.read_config_from_api or conn.need_bind or not conn.report_tts_enable:
+        conn.logger.bind(tag=TAG).debug(
+            f"TTS上报被跳过: read_config_from_api={conn.read_config_from_api}, "
+            f"need_bind={conn.need_bind}, report_tts_enable={conn.report_tts_enable}"
+        )
         return
     if conn.chat_history_conf == 0:
+        conn.logger.bind(tag=TAG).debug(f"TTS上报被跳过: chat_history_conf=0")
         return
     """将TTS数据加入上报队列
 
@@ -118,24 +129,35 @@ def enqueue_tts_report(conn: "ConnectionHandler", text, opus_data):
     """
     try:
         # 使用连接对象的队列，传入文本和二进制数据而非文件路径
-        if conn.chat_history_conf == 2:
+        if conn.chat_history_conf == 2 and opus_data:
             conn.report_queue.put((2, text, opus_data, int(time.time())))
             conn.logger.bind(tag=TAG).debug(
                 f"TTS数据已加入上报队列: {conn.device_id}, 音频大小: {len(opus_data)} "
             )
         else:
             conn.report_queue.put((2, text, None, int(time.time())))
-            conn.logger.bind(tag=TAG).debug(
-                f"TTS数据已加入上报队列: {conn.device_id}, 不上报音频"
+            conn.logger.bind(tag=TAG).info(
+                f"✅ TTS数据已加入上报队列: {conn.device_id}, 不上报音频"
             )
     except Exception as e:
         conn.logger.bind(tag=TAG).error(f"加入TTS上报队列失败: {text}, {e}")
 
 
 def enqueue_asr_report(conn: "ConnectionHandler", text, opus_data):
+    # Entry point logging - this should ALWAYS appear if function is called
+    conn.logger.bind(tag=TAG).info(
+        f"🔍 enqueue_asr_report CALLED: text='{text[:50] if text else None}...', "
+        f"opus_data={opus_data is not None}, report_asr_enable={conn.report_asr_enable}"
+    )
+
     if not conn.read_config_from_api or conn.need_bind or not conn.report_asr_enable:
+        conn.logger.bind(tag=TAG).debug(
+            f"ASR上报被跳过: read_config_from_api={conn.read_config_from_api}, "
+            f"need_bind={conn.need_bind}, report_asr_enable={conn.report_asr_enable}"
+        )
         return
     if conn.chat_history_conf == 0:
+        conn.logger.bind(tag=TAG).debug(f"ASR上报被跳过: chat_history_conf=0")
         return
     """将ASR数据加入上报队列
 
@@ -146,15 +168,15 @@ def enqueue_asr_report(conn: "ConnectionHandler", text, opus_data):
     """
     try:
         # 使用连接对象的队列，传入文本和二进制数据而非文件路径
-        if conn.chat_history_conf == 2:
+        if conn.chat_history_conf == 2 and opus_data:
             conn.report_queue.put((1, text, opus_data, int(time.time())))
             conn.logger.bind(tag=TAG).debug(
                 f"ASR数据已加入上报队列: {conn.device_id}, 音频大小: {len(opus_data)} "
             )
         else:
             conn.report_queue.put((1, text, None, int(time.time())))
-            conn.logger.bind(tag=TAG).debug(
-                f"ASR数据已加入上报队列: {conn.device_id}, 不上报音频"
+            conn.logger.bind(tag=TAG).info(
+                f"✅ ASR数据已加入上报队列: {conn.device_id}, 不上报音频"
             )
     except Exception as e:
         conn.logger.bind(tag=TAG).debug(f"加入ASR上报队列失败: {text}, {e}")

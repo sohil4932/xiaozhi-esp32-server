@@ -22,7 +22,9 @@ Key Features:
 - Custom agent personalities and workflows
 """
 
+import io
 import json
+import wave
 import base64
 import asyncio
 import websockets
@@ -140,8 +142,29 @@ class ElevenLabsConversationalProvider:
         # Lock to serialize all WebSocket sends (prevent concurrent send corruption)
         self._ws_send_lock = asyncio.Lock()
 
+        # Voiceprint (speaker identification) state
+        self.voiceprint_enabled = False
+        self.voiceprint_buffer = b""  # Buffer PCM audio for voiceprint identification
+        self.voiceprint_buffer_duration = 0.0  # Duration in seconds
+        self.voiceprint_min_duration = 3.0  # Minimum 3 seconds of audio for identification
+        self.voiceprint_max_duration = 5.0  # Maximum 5 seconds to buffer
+        self.voiceprint_identified = False  # True after first successful identification
+        self.current_speaker = None  # Current identified speaker name
+        self.voiceprint_task = None  # Background task for identification
+
+        # Audio buffering for chat history reporting (Opus packets)
+        self.user_audio_buffer = []  # List of Opus packets for user speech (for chat history with audio)
+        self.agent_audio_buffer = []  # List of Opus packets for agent speech (for chat history with audio)
+        self.max_audio_buffer_duration = 3.5  # Maximum 3.5 seconds of audio to buffer (captures typical utterances with minimal leading silence)
+
+        # Check if voiceprint is available from connection
+        if hasattr(conn, 'voiceprint_provider') and conn.voiceprint_provider:
+            self.voiceprint_enabled = True
+            logger.bind(tag=TAG).info("Voiceprint integration enabled for ElevenLabs Conversational AI")
+
         logger.bind(tag=TAG).info(
-            f"ElevenLabs Conversational AI provider initialized | Agent ID: {self.agent_id}"
+            f"ElevenLabs Conversational AI provider initialized | Agent ID: {self.agent_id} | "
+            f"Voiceprint: {'Enabled' if self.voiceprint_enabled else 'Disabled'}"
         )
 
     async def connect(self):
@@ -436,8 +459,12 @@ class ElevenLabsConversationalProvider:
                 # Send transcription to client for display
                 await self._send_transcription_to_client(transcript)
 
-                # Report to management API chat history
-                enqueue_asr_report(self.conn, transcript, None)
+                # Report to management API chat history (with audio for voiceprint)
+                # Pass a copy of the buffer to avoid modification during processing
+                audio_snapshot = self.user_audio_buffer.copy()
+                enqueue_asr_report(self.conn, transcript, audio_snapshot)
+                # Clear user audio buffer after reporting
+                self.user_audio_buffer.clear()
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error handling user transcript: {e}")
@@ -470,14 +497,18 @@ class ElevenLabsConversationalProvider:
                 if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
                     self.conn.dialogue.put(Message(role="assistant", content=response))
 
-                # Report to management API chat history
-                enqueue_tts_report(self.conn, response, None)
-
                 # Send transcription to ESP32 for display (same as OpenAI Realtime)
                 await self._send_transcription_to_client(response)
 
                 # Flush any partially-accumulated PCM from the output buffer
                 await self._send_audio_complete()
+
+                # Report to management API chat history (with audio for voiceprint)
+                # Pass a copy of the buffer to avoid modification during processing
+                audio_snapshot = self.agent_audio_buffer.copy()
+                enqueue_tts_report(self.conn, response, audio_snapshot)
+                # Clear agent audio buffer after reporting
+                self.agent_audio_buffer.clear()
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error handling agent response: {e}")
@@ -675,6 +706,14 @@ class ElevenLabsConversationalProvider:
 
                 try:
                     opus_frame = self.opus_encoder.encode(frame_bytes, self.output_frame_size)
+
+                    # Buffer Opus packet for chat history (agent audio)
+                    self.agent_audio_buffer.append(opus_frame)
+                    # Limit buffer size (same as user audio buffer)
+                    max_packets = int(self.max_audio_buffer_duration / (self.opus_frame_duration_ms / 1000))
+                    if len(self.agent_audio_buffer) > max_packets:
+                        self.agent_audio_buffer = self.agent_audio_buffer[-max_packets:]
+
                     if self.conn.websocket:
                         # Send to client (handles MQTT gateway header automatically)
                         await self.conn.send_audio_to_client(opus_frame)
@@ -738,6 +777,13 @@ class ElevenLabsConversationalProvider:
             self.last_activity_time = time.time()
             self.conn.last_activity_time = self.last_activity_time * 1000
 
+            # Buffer Opus packet for chat history (for voiceprint enrollment)
+            self.user_audio_buffer.append(audio)
+            # Limit buffer size (30 seconds at 16kHz Opus ~= 500 packets of 60ms each)
+            max_packets = int(self.max_audio_buffer_duration / (self.opus_frame_duration_ms / 1000))
+            if len(self.user_audio_buffer) > max_packets:
+                self.user_audio_buffer = self.user_audio_buffer[-max_packets:]
+
             # Decode Opus to PCM16 at 16kHz (same as OpenAI Realtime working approach)
             # Frame size for 16kHz at 60ms = 960 samples
             try:
@@ -748,6 +794,10 @@ class ElevenLabsConversationalProvider:
 
             # Accumulate PCM into buffer (no resampling needed - ElevenLabs uses 16kHz)
             self._input_pcm_buffer += pcm_16khz
+
+            # Voiceprint: Buffer audio for speaker identification (if enabled and not yet identified)
+            if self.voiceprint_enabled and not self.voiceprint_identified:
+                await self._buffer_audio_for_voiceprint(pcm_16khz)
 
             # Send in 60ms chunks (960 samples at 16kHz = 1920 bytes)
             chunk_size_bytes = 960 * 2  # 1920 bytes = 60ms at 16kHz
@@ -762,6 +812,7 @@ class ElevenLabsConversationalProvider:
                 # Send audio chunk to ElevenLabs
                 try:
                     message = {
+                        "type": "user_audio_chunk",
                         "user_audio_chunk": audio_b64
                     }
                     await self._ws_send(json.dumps(message))
@@ -975,6 +1026,142 @@ class ElevenLabsConversationalProvider:
         except Exception as e:
             logger.bind(tag=TAG).error(f"Failed to log tools: {e}")
 
+    async def _buffer_audio_for_voiceprint(self, pcm_data: bytes):
+        """Buffer PCM audio for voiceprint identification
+
+        Buffers audio until minimum duration is reached, then triggers identification.
+        Limits buffer to maximum duration to avoid memory issues.
+
+        Args:
+            pcm_data: PCM16 audio data at 16kHz
+        """
+        try:
+            # Add to buffer
+            self.voiceprint_buffer += pcm_data
+
+            # Calculate duration (16kHz, 16-bit = 2 bytes per sample)
+            self.voiceprint_buffer_duration = len(self.voiceprint_buffer) / (16000 * 2)
+
+            # If we've reached minimum duration and no identification task is running, start one
+            if (self.voiceprint_buffer_duration >= self.voiceprint_min_duration and
+                (self.voiceprint_task is None or self.voiceprint_task.done())):
+
+                logger.bind(tag=TAG).info(
+                    f"Voiceprint buffer ready ({self.voiceprint_buffer_duration:.1f}s) - starting identification"
+                )
+
+                # Start identification task in background (non-blocking)
+                self.voiceprint_task = asyncio.create_task(self._identify_speaker())
+
+            # Limit buffer size to maximum duration
+            elif self.voiceprint_buffer_duration > self.voiceprint_max_duration:
+                # Keep only the last max_duration seconds
+                max_bytes = int(self.voiceprint_max_duration * 16000 * 2)
+                self.voiceprint_buffer = self.voiceprint_buffer[-max_bytes:]
+                self.voiceprint_buffer_duration = self.voiceprint_max_duration
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error buffering audio for voiceprint: {e}")
+
+    async def _identify_speaker(self):
+        """Identify speaker from buffered audio and inject into conversation context"""
+        try:
+            if not self.conn.voiceprint_provider:
+                return
+
+            # Convert PCM to WAV format for voiceprint API
+            wav_data = self._pcm_to_wav(self.voiceprint_buffer)
+            if not wav_data:
+                logger.bind(tag=TAG).warning("Failed to convert PCM to WAV for voiceprint")
+                return
+
+            logger.bind(tag=TAG).info("Running voiceprint identification...")
+
+            # Call voiceprint provider
+            speaker_name = await self.conn.voiceprint_provider.identify_speaker(
+                wav_data, self.conn.session_id
+            )
+
+            if speaker_name and speaker_name != "未知说话人":
+                self.current_speaker = speaker_name
+                self.voiceprint_identified = True
+
+                logger.bind(tag=TAG).info(f"Speaker identified: {speaker_name}")
+
+                # Inject speaker identity into ElevenLabs conversation context
+                await self._inject_speaker_context(speaker_name)
+
+                # Clear buffer after successful identification
+                self.voiceprint_buffer = b""
+                self.voiceprint_buffer_duration = 0.0
+            else:
+                logger.bind(tag=TAG).warning(
+                    f"Speaker identification failed or unknown: {speaker_name}"
+                )
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error identifying speaker: {e}")
+
+    async def _inject_speaker_context(self, speaker_name: str):
+        """Inject speaker identity into ElevenLabs conversation via adding to dialogue
+
+        Updates the connection's dialogue history to inform the LLM about speaker identity.
+        This is the most reliable way to ensure the agent knows who is speaking.
+
+        Args:
+            speaker_name: Identified speaker name (e.g., "Sohil", "爸爸", "妈妈")
+        """
+        try:
+            # Add speaker context to the dialogue history
+            # This ensures the agent/LLM knows who the current speaker is
+            if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
+                from core.utils.dialogue import Message
+
+                # Add a system message to the dialogue history
+                context_message = f"Note: The current speaker has been identified as {speaker_name}. Please address them by name and personalize your responses."
+                self.conn.dialogue.put(Message(role="system", content=context_message))
+
+                logger.bind(tag=TAG).info(
+                    f"Added speaker context for {speaker_name} to conversation dialogue"
+                )
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error injecting speaker context: {e}")
+
+    def _pcm_to_wav(self, pcm_data: bytes) -> bytes:
+        """Convert PCM16 data to WAV format for voiceprint API
+
+        Args:
+            pcm_data: PCM16 audio data at 16kHz
+
+        Returns:
+            WAV file bytes
+        """
+        if len(pcm_data) == 0:
+            logger.bind(tag=TAG).warning("PCM data is empty, cannot convert to WAV")
+            return b""
+
+        # Ensure data length is even (16-bit audio)
+        if len(pcm_data) % 2 != 0:
+            pcm_data = pcm_data[:-1]
+
+        # Create WAV file in memory
+        wav_buffer = io.BytesIO()
+        try:
+            with wave.open(wav_buffer, "wb") as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(16000)  # 16kHz sample rate
+                wav_file.writeframes(pcm_data)
+
+            wav_buffer.seek(0)
+            wav_data = wav_buffer.read()
+
+            return wav_data
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"WAV conversion failed: {e}")
+            return b""
+
     async def cleanup(self):
         """Clean up resources and disconnect"""
         try:
@@ -988,6 +1175,14 @@ class ElevenLabsConversationalProvider:
                 pass  # Best effort
 
             self.is_connected = False
+
+            # Cancel voiceprint task if running
+            if self.voiceprint_task and not self.voiceprint_task.done():
+                self.voiceprint_task.cancel()
+                try:
+                    await self.voiceprint_task
+                except asyncio.CancelledError:
+                    pass
 
             # Cancel receive task
             if self.receive_task and not self.receive_task.done():
