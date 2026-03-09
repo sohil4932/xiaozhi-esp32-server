@@ -28,6 +28,8 @@ from typing import Dict, Any, Optional
 from config.logger import setup_logging
 from google import genai
 from google.genai import types
+from core.handle.reportHandle import enqueue_asr_report, enqueue_tts_report
+from core.utils.dialogue import Message
 
 TAG = __name__
 logger = setup_logging()
@@ -127,10 +129,32 @@ class GeminiLiveProvider:
         # Function call handling
         self.pending_function_calls = {}
 
+        # Voiceprint (speaker identification) state
+        self.voiceprint_enabled = False
+        self.voiceprint_buffer = b""  # Buffer PCM audio for voiceprint identification
+        self.voiceprint_buffer_duration = 0.0  # Duration in seconds
+        self.voiceprint_min_duration = 3.0  # Minimum 3 seconds of audio for identification
+        self.voiceprint_max_duration = 5.0  # Maximum 5 seconds to buffer
+        self.voiceprint_identified = False  # True after first successful identification
+        self.current_speaker = None  # Current identified speaker name
+        self.voiceprint_task = None  # Background task for identification
+
+        # Audio buffering for chat history reporting (Opus packets)
+        self.user_audio_buffer = []  # List of Opus packets for user speech (for chat history with audio)
+        self.agent_audio_buffer = []  # List of Opus packets for agent speech (for chat history with audio)
+        self.max_audio_buffer_duration = 3.5  # Maximum 3.5 seconds of audio to buffer
+        self.opus_frame_duration_ms = 60  # 60ms Opus frames
+
+        # Check if voiceprint is available from connection
+        if hasattr(conn, 'voiceprint_provider') and conn.voiceprint_provider:
+            self.voiceprint_enabled = True
+            logger.bind(tag=TAG).info("Voiceprint integration enabled for Gemini Live")
+
         logger.bind(tag=TAG).info(
             f"Gemini Live provider initialized | "
             f"Model: {self.model} | Voice: {self.voice} | Language: {self.language} | "
-            f"Vertex AI: {self.use_vertex}"
+            f"Vertex AI: {self.use_vertex} | "
+            f"Voiceprint: {'Enabled' if self.voiceprint_enabled else 'Disabled'}"
         )
 
     async def connect(self):
@@ -354,7 +378,24 @@ class GeminiLiveProvider:
 
                 # Input transcription (user speech)
                 if server_content.input_transcription and server_content.input_transcription.text:
-                    logger.bind(tag=TAG).info(f"User said: {server_content.input_transcription.text}")
+                    transcript = server_content.input_transcription.text
+                    logger.bind(tag=TAG).info(f"User said: {transcript}")
+
+                    # Save to dialogue history (for memory)
+                    if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
+                        self.conn.dialogue.put(Message(role="user", content=transcript))
+
+                    # Report to chat history (for web UI) - runs in background with audio
+                    try:
+                        if self.conn.chat_history_conf > 0:
+                            # Pass a copy of the audio buffer to avoid modification during processing
+                            audio_snapshot = self.user_audio_buffer.copy()
+                            enqueue_asr_report(self.conn, transcript, audio_snapshot)
+                            # Clear user audio buffer after reporting
+                            self.user_audio_buffer.clear()
+                            logger.bind(tag=TAG).debug("Enqueued ASR report for web UI with audio")
+                    except Exception as e:
+                        logger.bind(tag=TAG).error(f"Failed to enqueue ASR report: {e}")
 
                 # Output transcription (bot speech)
                 if server_content.output_transcription and server_content.output_transcription.text:
@@ -368,6 +409,22 @@ class GeminiLiveProvider:
                     if not self.transcription_sent and self.current_transcription.strip():
                         await self._send_transcription_to_client(self.current_transcription)
                         self.transcription_sent = True
+
+                        # Save to dialogue history (for memory)
+                        if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
+                            self.conn.dialogue.put(Message(role="assistant", content=self.current_transcription))
+
+                        # Report to chat history (for web UI) - runs in background with audio
+                        try:
+                            if self.conn.chat_history_conf > 0:
+                                # Pass a copy of the audio buffer to avoid modification during processing
+                                audio_snapshot = self.agent_audio_buffer.copy()
+                                enqueue_tts_report(self.conn, self.current_transcription, audio_snapshot)
+                                # Clear agent audio buffer after reporting
+                                self.agent_audio_buffer.clear()
+                                logger.bind(tag=TAG).debug("Enqueued TTS report for web UI with audio")
+                        except Exception as e:
+                            logger.bind(tag=TAG).error(f"Failed to enqueue TTS report: {e}")
 
                 # Model turn with audio/text parts
                 if server_content.model_turn:
@@ -427,6 +484,13 @@ class GeminiLiveProvider:
 
                 # Encode to Opus at 16kHz
                 opus_frame = self.opus_encoder.encode(frame_bytes, FRAME_SIZE_SAMPLES)
+
+                # Buffer Opus packet for chat history (agent audio)
+                self.agent_audio_buffer.append(opus_frame)
+                # Limit buffer size based on duration
+                max_packets = int(self.max_audio_buffer_duration / (self.opus_frame_duration_ms / 1000))
+                if len(self.agent_audio_buffer) > max_packets:
+                    self.agent_audio_buffer = self.agent_audio_buffer[-max_packets:]
 
                 # Send to client
                 if self.conn.websocket:
@@ -550,8 +614,19 @@ class GeminiLiveProvider:
             if not self.is_connected:
                 return
 
+            # Buffer Opus packet for chat history (for voiceprint enrollment)
+            self.user_audio_buffer.append(audio)
+            # Limit buffer size based on duration
+            max_packets = int(self.max_audio_buffer_duration / (self.opus_frame_duration_ms / 1000))
+            if len(self.user_audio_buffer) > max_packets:
+                self.user_audio_buffer = self.user_audio_buffer[-max_packets:]
+
             # Decode Opus to PCM16 at 16kHz
             pcm_16khz = self.opus_decoder.decode(audio, 960)
+
+            # Voiceprint: Buffer audio for speaker identification (if enabled and not yet identified)
+            if self.voiceprint_enabled and not self.voiceprint_identified:
+                await self._buffer_audio_for_voiceprint(pcm_16khz)
 
             # Queue audio - Gemini's automatic VAD and proactivity handles everything
             await self.audio_input_queue.put(pcm_16khz)
@@ -605,10 +680,156 @@ class GeminiLiveProvider:
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error sending TTS stop: {e}")
 
+    async def _buffer_audio_for_voiceprint(self, pcm_data: bytes):
+        """Buffer PCM audio for voiceprint identification
+
+        Buffers audio until minimum duration is reached, then triggers identification.
+        Limits buffer to maximum duration to avoid memory issues.
+
+        Args:
+            pcm_data: PCM16 audio data at 16kHz
+        """
+        try:
+            # Add to buffer
+            self.voiceprint_buffer += pcm_data
+
+            # Calculate duration (16kHz, 16-bit = 2 bytes per sample)
+            self.voiceprint_buffer_duration = len(self.voiceprint_buffer) / (16000 * 2)
+
+            # If we've reached minimum duration and no identification task is running, start one
+            if (self.voiceprint_buffer_duration >= self.voiceprint_min_duration and
+                (self.voiceprint_task is None or self.voiceprint_task.done())):
+
+                logger.bind(tag=TAG).info(
+                    f"Voiceprint buffer ready ({self.voiceprint_buffer_duration:.1f}s) - starting identification"
+                )
+
+                # Start identification task in background (non-blocking)
+                self.voiceprint_task = asyncio.create_task(self._identify_speaker())
+
+            # Limit buffer size to maximum duration
+            elif self.voiceprint_buffer_duration > self.voiceprint_max_duration:
+                # Keep only the last max_duration seconds
+                max_bytes = int(self.voiceprint_max_duration * 16000 * 2)
+                self.voiceprint_buffer = self.voiceprint_buffer[-max_bytes:]
+                self.voiceprint_buffer_duration = self.voiceprint_max_duration
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error buffering audio for voiceprint: {e}")
+
+    async def _identify_speaker(self):
+        """Identify speaker from buffered audio and inject into conversation context"""
+        try:
+            if not self.conn.voiceprint_provider:
+                return
+
+            # Convert PCM to WAV format for voiceprint API
+            wav_data = self._pcm_to_wav(self.voiceprint_buffer)
+            if not wav_data:
+                logger.bind(tag=TAG).warning("Failed to convert PCM to WAV for voiceprint")
+                return
+
+            logger.bind(tag=TAG).info("Running voiceprint identification...")
+
+            # Call voiceprint provider
+            speaker_name = await self.conn.voiceprint_provider.identify_speaker(
+                wav_data, self.conn.session_id
+            )
+
+            if speaker_name and speaker_name != "未知说话人":
+                self.current_speaker = speaker_name
+                self.voiceprint_identified = True
+
+                logger.bind(tag=TAG).info(f"Speaker identified: {speaker_name}")
+
+                # Inject speaker identity into Gemini Live conversation context
+                await self._inject_speaker_context(speaker_name)
+
+                # Clear buffer after successful identification
+                self.voiceprint_buffer = b""
+                self.voiceprint_buffer_duration = 0.0
+            else:
+                logger.bind(tag=TAG).warning(
+                    f"Speaker identification failed or unknown: {speaker_name}"
+                )
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error identifying speaker: {e}")
+
+    async def _inject_speaker_context(self, speaker_name: str):
+        """Inject speaker identity into Gemini Live conversation
+
+        Sends a text message with speaker context to inform the LLM about speaker identity.
+        This ensures the agent knows who is speaking and can personalize responses.
+
+        Args:
+            speaker_name: Identified speaker name (e.g., "Sohil", "爸爸", "妈妈")
+        """
+        try:
+            # Add speaker context to the dialogue history for memory system
+            if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
+                context_message = f"Note: The current speaker has been identified as {speaker_name}. Please address them by name and personalize your responses."
+                self.conn.dialogue.put(Message(role="system", content=context_message))
+
+                logger.bind(tag=TAG).info(
+                    f"Added speaker context for {speaker_name} to Gemini Live conversation dialogue"
+                )
+
+            # Note: Gemini Live doesn't support injecting system messages mid-conversation,
+            # so we rely on the dialogue/memory system to provide context in subsequent turns
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error injecting speaker context: {e}")
+
+    def _pcm_to_wav(self, pcm_data: bytes) -> bytes:
+        """Convert PCM16 data to WAV format for voiceprint API
+
+        Args:
+            pcm_data: PCM16 audio data at 16kHz
+
+        Returns:
+            WAV file bytes
+        """
+        import io
+        import wave
+
+        if len(pcm_data) == 0:
+            logger.bind(tag=TAG).warning("PCM data is empty, cannot convert to WAV")
+            return b""
+
+        # Ensure data length is even (16-bit audio)
+        if len(pcm_data) % 2 != 0:
+            pcm_data = pcm_data[:-1]
+
+        # Create WAV file in memory
+        wav_buffer = io.BytesIO()
+        try:
+            with wave.open(wav_buffer, "wb") as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(16000)  # 16kHz sample rate
+                wav_file.writeframes(pcm_data)
+
+            wav_buffer.seek(0)
+            wav_data = wav_buffer.read()
+
+            return wav_data
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"WAV conversion failed: {e}")
+            return b""
+
     async def disconnect(self):
         """Disconnect from Gemini Live API"""
         try:
             self.is_connected = False
+
+            # Cancel voiceprint task if running
+            if self.voiceprint_task and not self.voiceprint_task.done():
+                self.voiceprint_task.cancel()
+                try:
+                    await self.voiceprint_task
+                except asyncio.CancelledError:
+                    pass
 
             # Send poison pill to stop send loop
             await self.audio_input_queue.put(None)
