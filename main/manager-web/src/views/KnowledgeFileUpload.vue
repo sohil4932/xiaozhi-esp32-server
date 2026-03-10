@@ -141,7 +141,7 @@
         <el-button type="primary" @click="handleBatchUploadSubmit" :loading="uploading"
           :disabled="selectedFilesList.length === 0">
           {{ $t('knowledgeFileUpload.confirm') }} {{ selectedFilesList.length > 0 ?
-            `(${selectedFilesList.length}${$t('knowledgeFileUpload.itemsPerPage').replace('条/页', '个文件')})` : '' }}
+            `(${selectedFilesList.length} files)` : '' }}
         </el-button>
       </div>
     </el-dialog>
@@ -604,7 +604,7 @@ export default {
       // 文件上传前的验证
       const isLt10M = file.size / 1024 / 1024 < 10;
       if (!isLt10M) {
-        this.$message.error('文件大小不能超过10MB!');
+        this.$message.error('File size cannot exceed 10MB!');
         return;
       }
 
@@ -619,7 +619,7 @@ export default {
       // 文件上传前的验证
       const isLt10M = file.size / 1024 / 1024 < 10;
       if (!isLt10M) {
-        this.$message.error('文件大小不能超过10MB!');
+        this.$message.error('File size cannot exceed 10MB!');
         return false;
       }
       // 保存文件到uploadForm
@@ -643,7 +643,7 @@ export default {
     // 批量上传提交
     handleBatchUploadSubmit: function () {
       if (this.selectedFilesList.length === 0) {
-        this.$message.error('请选择要上传的文件');
+        this.$message.error('Please select files to upload');
         return;
       }
 
@@ -685,12 +685,12 @@ export default {
           const failedCount = results.filter(r => !r.success).length;
 
           if (successCount > 0) {
-            this.$message.success(`成功上传 ${successCount} 个文件`);
+            this.$message.success(`Successfully uploaded ${successCount} files`);
           }
 
           if (failedCount > 0) {
             const failedFiles = results.filter(r => !r.success).map(r => r.fileName);
-            this.$message.error(`上传失败 ${failedCount} 个文件: ${failedFiles.join(', ')}`);
+            this.$message.error(`Failed to upload ${failedCount} files: ${failedFiles.join(', ')}`);
           }
 
           if (successCount > 0) {
@@ -700,7 +700,7 @@ export default {
         })
         .catch(error => {
           this.uploading = false;
-          this.$message.error('批量上传失败');
+          this.$message.error('Batch upload failed');
           console.error('批量上传失败:', error);
         });
     },
@@ -749,7 +749,7 @@ export default {
         KnowledgeBaseAPI.parseDocument(this.datasetId, row.id,
           ({ data }) => {
             if (data && data.code === 0) {
-              this.$message.success('请求已提交，解析中');
+              this.$message.success('Request submitted, parsing...');
               
               // 立即更新文档状态为处理中
               const document = this.fileList.find(doc => doc.id === row.id);
@@ -963,7 +963,7 @@ export default {
             // 解析切片列表数据
             this.parseSliceData(data.data);
           } else {
-            this.$message.error(data?.msg || '获取切片列表失败');
+            this.$message.error(data?.msg || 'Failed to get chunk list');
             this.sliceList = [];
             this.sliceTotal = 0;
           }
@@ -972,9 +972,9 @@ export default {
           this.sliceLoading = false;
           // 错误回调处理后端返回的错误信息
           if (err && err.data) {
-            this.$message.error(err.data.msg || err.msg || '获取切片列表失败');
+            this.$message.error(err.data.msg || err.msg || 'Failed to get chunk list');
           } else {
-            this.$message.error('获取切片列表失败');
+            this.$message.error('Failed to get chunk list');
           }
           console.error('获取切片列表失败:', err);
           this.sliceList = [];
@@ -1085,18 +1085,18 @@ export default {
           this.retrievalTestLoading = false;
           if (data && data.code === 0) {
             this.retrievalTestResult = data.data || data;
-            this.$message.success('召回测试完成');
+            this.$message.success('Recall test completed');
           } else {
-            this.$message.error(data?.msg || '召回测试失败');
+            this.$message.error(data?.msg || 'Recall test failed');
           }
         },
         (err) => {
           this.retrievalTestLoading = false;
           // 错误回调处理后端返回的错误信息
           if (err && err.data) {
-            this.$message.error(err.data.msg || err.msg || '召回测试失败');
+            this.$message.error(err.data.msg || err.msg || 'Recall test failed');
           } else {
-            this.$message.error('召回测试失败');
+            this.$message.error('Recall test failed');
           }
           console.error('召回测试失败:', err);
         }

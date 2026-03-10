@@ -83,7 +83,7 @@
                 @change="val => handleParamChange(currentFunction, field.key, val)" />
 
               <!-- JSON -->
-              <el-input v-else-if="field.type === 'json'" type="textarea" :rows="6" placeholder="请输入合法的 JSON"
+              <el-input v-else-if="field.type === 'json'" type="textarea" :rows="6" placeholder="Enter valid JSON"
                 v-model="textCache[field.key]" @blur="flushJson(field)" />
 
               <!-- number -->
@@ -296,7 +296,7 @@ export default {
           this.$message.error(this.$t('functionDialog.copyFailed'));
         }
       } catch (err) {
-        this.$message.error('复制失败，请手动复制');
+        this.$message.error('Copy failed, please copy manually');
         console.error('复制失败:', err);
       } finally {
         document.body.removeChild(textarea);

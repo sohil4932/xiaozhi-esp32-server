@@ -60,7 +60,7 @@ public class ModelProviderServiceImpl extends BaseServiceImpl<ModelProviderDao, 
                 ModelProviderDTO dto = new ModelProviderDTO();
                 dto.setId(kb.getId());
                 dto.setModelType("Rag");
-                dto.setName("[知识库]" + kb.getName());
+                dto.setName("[Knowledge]" + kb.getName());
                 dto.setProviderCode("ragflow"); // 假设所有RAG都使用ragflow
                 dto.setFields("[]");
                 dto.setSort(0);

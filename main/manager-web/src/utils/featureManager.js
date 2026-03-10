@@ -212,7 +212,7 @@ class FeatureManager {
                         }
                     }),
                     valueType: 'json',
-                    remark: '系统功能菜单配置'
+                    remark: 'System feature menu configuration'
                 },
                 (updateResult) => {
                     if (updateResult.code === 0) {

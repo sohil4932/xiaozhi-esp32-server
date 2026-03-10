@@ -125,7 +125,7 @@ export default {
             pageSizeOptions: [10, 20, 50, 100],
             total: 0,
             dialogVisible: false,
-            dialogTitle: "新增固件",
+            dialogTitle: "Add Firmware",
             isAllSelected: false,
             firmwareForm: {
                 id: null,

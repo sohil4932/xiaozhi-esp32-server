@@ -246,7 +246,7 @@ export default {
                 Object.keys(model.configJson).forEach((key) => {
                   if (this.isSensitiveField(key) && model.configJson[key]) {
                     const sensitiveName = this.getSensitiveFieldName(key);
-                    model.configJson[key] = `你的${sensitiveName}`;
+                    model.configJson[key] = `Your ${sensitiveName}`;
                   }
                 });
               }
@@ -330,7 +330,7 @@ export default {
                 : f.type === "password"
                   ? "password"
                   : "text",
-            placeholder: `请输入${f.key}`,
+            placeholder: `Enter ${f.key}`,
           }));
 
           if (this.pendingModelData && this.pendingProviderType === providerCode) {
@@ -384,13 +384,13 @@ export default {
           return parsed;
         }
         this.$message.error({
-          message: '必须输入字典格式（如 {"key":"value"}），保存则使用原数据',
+          message: 'Must enter dictionary format (e.g. {"key":"value"}), original data will be used on save',
           showClose: true,
         });
         return null;
       } catch (e) {
         this.$message.error({
-          message: 'JSON格式错误（如 {"key":"value"}），保存则使用原数据',
+          message: 'JSON format error (e.g. {"key":"value"}), original data will be used on save',
           showClose: true,
         });
         return null;
@@ -418,13 +418,13 @@ export default {
     // 获取敏感字段对应的中文名称
     getSensitiveFieldName(fieldName) {
       const keyMap = {
-        api_key: "API密钥",
-        personal_access_token: "个人访问令牌",
-        access_token: "访问令牌",
-        token: "令牌",
-        secret: "密钥",
-        access_key_secret: "访问密钥",
-        secret_key: "密钥",
+        api_key: "API Key",
+        personal_access_token: "Personal Access Token",
+        access_token: "Access Token",
+        token: "Token",
+        secret: "Secret",
+        access_key_secret: "Access Key Secret",
+        secret_key: "Secret Key",
       };
 
       for (const [key, value] of Object.entries(keyMap)) {
@@ -432,7 +432,7 @@ export default {
           return value;
         }
       }
-      return "敏感信息";
+      return "Sensitive Info";
     },
 
     // 处理input聚焦事件
@@ -456,7 +456,7 @@ export default {
             this.$set(this.form.configJson, field, this.originalValues[field]);
           } else {
             const sensitiveName = this.getSensitiveFieldName(field);
-            this.$set(this.form.configJson, field, `你的${sensitiveName}`);
+            this.$set(this.form.configJson, field, `Your ${sensitiveName}`);
           }
           // 清除临时存储的原始值
           this.$delete(this.originalValues, field);

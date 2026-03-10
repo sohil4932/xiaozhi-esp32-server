@@ -256,7 +256,7 @@ export default {
             const blob = new Blob([res.data], { type: res.data.type });
             this.captchaUrl = URL.createObjectURL(blob);
           } else {
-            showDanger("验证码加载失败，点击刷新");
+            showDanger("Captcha loading failed, click to refresh");
           }
         });
       }
@@ -353,7 +353,7 @@ export default {
         },
         (err) => {
           // 直接使用后端返回的国际化消息
-          let errorMessage = err.data.msg || "登录失败";
+          let errorMessage = err.data.msg || "Login failed";
 
           showDanger(errorMessage);
           if (

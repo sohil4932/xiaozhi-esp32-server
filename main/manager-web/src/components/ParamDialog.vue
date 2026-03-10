@@ -53,7 +53,7 @@ export default {
   props: {
     title: {
       type: String,
-      default: '新增参数'
+      default: 'Add Parameter'
     },
     visible: {
       type: Boolean,
