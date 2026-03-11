@@ -186,9 +186,9 @@ async def play_local_music(conn: "ConnectionHandler", specific_file=None):
 async def _stream_music_file_realtime(conn, music_path):
     """Stream audio file directly to ESP32 in Realtime mode
 
-    This bypasses the TTS queue and OpenAI TTS, streaming the audio file
-    directly to the client using the same low-level packet sending method
-    used by the Realtime provider.
+    This bypasses the TTS queue and provider TTS, streaming the audio file
+    directly to the client. Works with any Realtime provider (OpenAI, ElevenLabs,
+    Gemini Live, Hume).
 
     Args:
         conn: Connection object
@@ -198,7 +198,6 @@ async def _stream_music_file_realtime(conn, music_path):
         conn.logger.bind(tag=TAG).info(f"Converting music file to Opus format: {music_path}")
 
         # Convert audio file to Opus packets (16kHz, 60ms frames)
-        # This uses the same conversion logic as TTS providers
         audio_packets = await audio_to_data(music_path, is_opus=True)
 
         if not audio_packets:
@@ -207,17 +206,19 @@ async def _stream_music_file_realtime(conn, music_path):
 
         conn.logger.bind(tag=TAG).info(f"Streaming {len(audio_packets)} audio packets to client")
 
-        # Pause OpenAI Realtime audio processing during music playback
-        # This prevents the session from processing incoming audio and interrupting music
-        if hasattr(conn, 'realtime_provider') and conn.realtime_provider:
+        # Pause Realtime provider audio processing during music playback
+        # This works with any provider that has is_music_playing flag
+        provider = getattr(conn, 'realtime_provider', None)
+        if provider:
             # Cancel any active response
-            if conn.realtime_provider.response_in_progress:
-                await conn.realtime_provider._cancel_response()
-                conn.logger.bind(tag=TAG).info("Cancelled active OpenAI response for music playback")
+            if getattr(provider, 'response_in_progress', False):
+                if hasattr(provider, '_cancel_response'):
+                    await provider._cancel_response()
+                    conn.logger.bind(tag=TAG).info("Cancelled active response for music playback")
 
             # Set flag to pause audio processing during music
-            conn.realtime_provider.is_music_playing = True
-            conn.logger.bind(tag=TAG).info("Paused OpenAI Realtime audio processing for music")
+            provider.is_music_playing = True
+            conn.logger.bind(tag=TAG).info("Paused Realtime audio processing for music")
 
         # Send TTS start signal to prepare client for audio
         if conn.websocket:
@@ -230,17 +231,21 @@ async def _stream_music_file_realtime(conn, music_path):
             )
 
         # Stream each Opus packet directly to the client
-        # Using the same low-level method as OpenAI Realtime provider
         for i, opus_packet in enumerate(audio_packets):
+            # Check abort flag (set by abort handler on user tap)
             if hasattr(conn, 'client_abort') and conn.client_abort:
                 conn.logger.bind(tag=TAG).info("Music playback aborted by client")
+                break
+
+            # Check if music was stopped externally (abort handler sets is_music_playing=False)
+            if provider and not provider.is_music_playing:
+                conn.logger.bind(tag=TAG).info("Music playback stopped externally")
                 break
 
             # Send opus packet directly to client
             await conn.send_audio_to_client(opus_packet)
 
             # Pace sending: 50ms delay to match 60ms playback rate
-            # This prevents network buffer overflow while maintaining smooth playback
             await asyncio.sleep(0.050)
 
             # Log progress every 100 packets
@@ -259,22 +264,29 @@ async def _stream_music_file_realtime(conn, music_path):
 
         conn.logger.bind(tag=TAG).info("Music streaming completed")
 
-        # Resume OpenAI Realtime audio processing after music
-        if hasattr(conn, 'realtime_provider') and conn.realtime_provider:
-            conn.realtime_provider.is_music_playing = False
-            # Clear the input audio buffer to start fresh
-            if conn.realtime_provider.ws:
-                await conn.realtime_provider.ws.send(json.dumps({"type": "input_audio_buffer.clear"}))
-            conn.logger.bind(tag=TAG).info("Resumed OpenAI Realtime audio processing")
+        # Resume Realtime audio processing after music
+        if provider:
+            provider.is_music_playing = False
+
+            # Provider-specific cleanup: clear input audio buffer
+            # OpenAI: has ws.send input_audio_buffer.clear
+            if hasattr(provider, 'ws') and provider.ws:
+                try:
+                    await provider.ws.send(json.dumps({"type": "input_audio_buffer.clear"}))
+                except Exception:
+                    pass  # Not all providers support this command
+
+            conn.logger.bind(tag=TAG).info("Resumed Realtime audio processing")
 
     except Exception as e:
         conn.logger.bind(tag=TAG).error(f"Failed to stream music file: {str(e)}")
         conn.logger.bind(tag=TAG).error(f"Error details: {traceback.format_exc()}")
 
         # Make sure to resume processing even if music fails
-        if hasattr(conn, 'realtime_provider') and conn.realtime_provider:
-            conn.realtime_provider.is_music_playing = False
-            conn.logger.bind(tag=TAG).info("Resumed OpenAI Realtime processing after error")
+        provider = getattr(conn, 'realtime_provider', None)
+        if provider:
+            provider.is_music_playing = False
+            conn.logger.bind(tag=TAG).info("Resumed Realtime processing after error")
 
 
 async def play_local_music(conn, specific_file=None):

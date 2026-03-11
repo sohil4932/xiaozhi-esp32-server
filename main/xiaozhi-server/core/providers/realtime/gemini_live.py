@@ -23,6 +23,7 @@ import json
 import base64
 import asyncio
 import os
+import time
 import opuslib_next
 from typing import Dict, Any, Optional
 from config.logger import setup_logging
@@ -30,6 +31,7 @@ from google import genai
 from google.genai import types
 from core.handle.reportHandle import enqueue_asr_report, enqueue_tts_report
 from core.utils.dialogue import Message
+from core.utils import textUtils
 
 TAG = __name__
 logger = setup_logging()
@@ -102,6 +104,10 @@ class GeminiLiveProvider:
         # Session state
         self.is_connected = False
         self.is_processing = False
+        self.is_music_playing = False  # Flag to pause audio processing during music playback
+
+        # Activity tracking for idle timeout
+        self.last_activity_time = time.time()
 
         # Tasks
         self.receive_task = None
@@ -117,6 +123,7 @@ class GeminiLiveProvider:
 
         # Conversation state
         self.response_in_progress = False
+        self._emotion_sent_for_current_response = False
 
         # Transcription tracking
         self.current_transcription = ""
@@ -358,6 +365,17 @@ class GeminiLiveProvider:
     async def _handle_response(self, response):
         """Handle response from Gemini Live API"""
         try:
+            # Update activity timestamp
+            self.last_activity_time = time.time()
+            self.conn.last_activity_time = self.last_activity_time * 1000  # Convert to milliseconds
+
+            # Check if client has pressed abort button
+            if hasattr(self.conn, 'client_abort') and self.conn.client_abort:
+                logger.bind(tag=TAG).info("Client abort detected - cancelling current response")
+                await self._cancel_response()
+                self.conn.client_abort = False
+                return
+
             # Log all response attributes for debugging
             has_server_content = hasattr(response, 'server_content') and response.server_content
             has_tool_call = hasattr(response, 'tool_call') and response.tool_call
@@ -400,31 +418,10 @@ class GeminiLiveProvider:
                 # Output transcription (bot speech)
                 if server_content.output_transcription and server_content.output_transcription.text:
                     transcription = server_content.output_transcription.text
-                    logger.bind(tag=TAG).info(f"Bot said: {transcription}")
+                    logger.bind(tag=TAG).debug(f"Bot transcription delta: {transcription}")
 
-                    # Accumulate transcription
+                    # Accumulate transcription (don't send until turn complete)
                     self.current_transcription += transcription
-
-                    # Send transcription to client if not already sent
-                    if not self.transcription_sent and self.current_transcription.strip():
-                        await self._send_transcription_to_client(self.current_transcription)
-                        self.transcription_sent = True
-
-                        # Save to dialogue history (for memory)
-                        if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
-                            self.conn.dialogue.put(Message(role="assistant", content=self.current_transcription))
-
-                        # Report to chat history (for web UI) - runs in background with audio
-                        try:
-                            if self.conn.chat_history_conf > 0:
-                                # Pass a copy of the audio buffer to avoid modification during processing
-                                audio_snapshot = self.agent_audio_buffer.copy()
-                                enqueue_tts_report(self.conn, self.current_transcription, audio_snapshot)
-                                # Clear agent audio buffer after reporting
-                                self.agent_audio_buffer.clear()
-                                logger.bind(tag=TAG).debug("Enqueued TTS report for web UI with audio")
-                        except Exception as e:
-                            logger.bind(tag=TAG).error(f"Failed to enqueue TTS report: {e}")
 
                 # Model turn with audio/text parts
                 if server_content.model_turn:
@@ -443,9 +440,14 @@ class GeminiLiveProvider:
                     logger.bind(tag=TAG).info("Turn complete")
                     await self._handle_turn_complete()
 
-                # Interrupted
+                # Interrupted - clean up audio state
                 if server_content.interrupted:
                     logger.bind(tag=TAG).info("Turn interrupted by user")
+                    self.pcm_buffer = bytearray()
+                    self.response_in_progress = False
+                    self.current_transcription = ""
+                    self.transcription_sent = False
+                    await self._send_tts_stop()
 
             # Tool call
             if response.tool_call:
@@ -461,15 +463,20 @@ class GeminiLiveProvider:
         Gemini sends PCM16 at 16kHz - same as ESP32, so no resampling needed!
         """
         try:
-            # Send TTS start signal on first audio chunk
+            # Send TTS start signals on first audio chunk
             if not self.response_in_progress:
                 self.response_in_progress = True
+                self._emotion_sent_for_current_response = False
                 logger.bind(tag=TAG).info("Bot started speaking")
+                # Reset audio sequence for new response
+                self.conn._audio_sequence = 0
+                self.audio_frames_sent = 0
+                await self._send_tts_initial_start()
                 await self._send_tts_start()
 
             # Add to buffer
             self.pcm_buffer.extend(audio_data)
-            logger.bind(tag=TAG).info(f"Received {len(audio_data)} bytes, buffer now {len(self.pcm_buffer)} bytes")
+            logger.bind(tag=TAG).debug(f"Received {len(audio_data)} bytes, buffer now {len(self.pcm_buffer)} bytes")
 
             # Process buffer in chunks of 960 samples (1920 bytes for PCM16)
             # 960 samples = 60ms at 16kHz - perfect for Opus
@@ -502,7 +509,7 @@ class GeminiLiveProvider:
                     break
 
             if frames_sent_this_batch > 0:
-                logger.bind(tag=TAG).info(f"Sent {frames_sent_this_batch} frames to client (total: {self.audio_frames_sent})")
+                logger.bind(tag=TAG).debug(f"Sent {frames_sent_this_batch} frames to client (total: {self.audio_frames_sent})")
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error handling audio response: {e}", exc_info=True)
@@ -555,6 +562,34 @@ class GeminiLiveProvider:
             logger.bind(tag=TAG).info(f"Turn complete - sent {self.audio_frames_sent} audio frames")
             logger.bind(tag=TAG).info(f"Full transcription: {self.current_transcription}")
 
+            # Now that we have the full transcription, send it to client and save
+            if self.current_transcription.strip():
+                # Send full transcription to client display
+                await self._send_transcription_to_client(self.current_transcription)
+
+                # Extract and send emotion to ESP32
+                if not self._emotion_sent_for_current_response:
+                    try:
+                        await textUtils.get_emotion(self.conn, self.current_transcription)
+                        self._emotion_sent_for_current_response = True
+                        logger.bind(tag=TAG).debug("Extracted and sent emotion to ESP32")
+                    except Exception as e:
+                        logger.bind(tag=TAG).error(f"Failed to extract emotion: {e}")
+
+                # Save to dialogue history (for memory)
+                if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
+                    self.conn.dialogue.put(Message(role="assistant", content=self.current_transcription))
+
+                # Report to chat history (for web UI)
+                try:
+                    if self.conn.chat_history_conf > 0:
+                        audio_snapshot = self.agent_audio_buffer.copy()
+                        enqueue_tts_report(self.conn, self.current_transcription, audio_snapshot)
+                        self.agent_audio_buffer.clear()
+                        logger.bind(tag=TAG).debug("Enqueued TTS report for web UI with audio")
+                except Exception as e:
+                    logger.bind(tag=TAG).error(f"Failed to enqueue TTS report: {e}")
+
             self.audio_frames_sent = 0
 
             # Reset transcription state for next turn
@@ -568,6 +603,11 @@ class GeminiLiveProvider:
             self.user_activity_active = False
             self.audio_frames_since_turn = 0
 
+            # Check if we should close connection after this response
+            if hasattr(self.conn, 'close_after_chat') and self.conn.close_after_chat:
+                logger.bind(tag=TAG).info("Closing connection after chat as requested")
+                await self.conn.close()
+
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error handling turn complete: {e}", exc_info=True)
 
@@ -575,14 +615,14 @@ class GeminiLiveProvider:
         """Flush any remaining audio in the buffer"""
         try:
             if len(self.pcm_buffer) > 0:
-                logger.bind(tag=TAG).info(f"Flushing {len(self.pcm_buffer)} bytes of remaining audio")
+                logger.bind(tag=TAG).debug(f"Flushing {len(self.pcm_buffer)} bytes of remaining audio")
 
                 # Pad to frame size if needed
                 FRAME_SIZE_BYTES = 960 * 2
                 if len(self.pcm_buffer) < FRAME_SIZE_BYTES:
                     padding_needed = FRAME_SIZE_BYTES - len(self.pcm_buffer)
                     self.pcm_buffer.extend(bytes(padding_needed))
-                    logger.bind(tag=TAG).info(f"Padded buffer with {padding_needed} bytes")
+                    logger.bind(tag=TAG).debug(f"Padded buffer with {padding_needed} bytes")
 
                 # Send final frame
                 frame_bytes = bytes(self.pcm_buffer[:FRAME_SIZE_BYTES])
@@ -591,14 +631,14 @@ class GeminiLiveProvider:
                 if self.conn.websocket:
                     await self.conn.send_audio_to_client(opus_frame)
                     self.audio_frames_sent += 1
-                    logger.bind(tag=TAG).info(f"Final audio frame sent (frame #{self.audio_frames_sent})")
+                    logger.bind(tag=TAG).debug(f"Final audio frame sent (frame #{self.audio_frames_sent})")
                 else:
                     logger.bind(tag=TAG).error("Cannot flush - no websocket connection")
 
                 # Clear buffer
                 self.pcm_buffer = bytearray()
             else:
-                logger.bind(tag=TAG).info("No remaining audio to flush")
+                logger.bind(tag=TAG).debug("No remaining audio to flush")
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error flushing audio buffer: {e}", exc_info=True)
 
@@ -612,7 +652,20 @@ class GeminiLiveProvider:
         """
         try:
             if not self.is_connected:
+                # Auto-connect if not yet connected
+                logger.bind(tag=TAG).info("Not connected yet, auto-connecting to Gemini Live...")
+                await self.connect()
+                if not self.is_connected:
+                    logger.bind(tag=TAG).warning("Cannot receive audio - auto-connect failed")
+                    return
+
+            # Skip audio processing if music is playing
+            if self.is_music_playing:
                 return
+
+            # Update activity timestamp
+            self.last_activity_time = time.time()
+            self.conn.last_activity_time = self.last_activity_time * 1000  # Convert to milliseconds
 
             # Buffer Opus packet for chat history (for voiceprint enrollment)
             self.user_audio_buffer.append(audio)
@@ -650,8 +703,8 @@ class GeminiLiveProvider:
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error sending transcription: {e}")
 
-    async def _send_tts_start(self):
-        """Signal to client that audio output is starting"""
+    async def _send_tts_initial_start(self):
+        """Signal to client that audio output is starting (enables codec on ESP32)"""
         try:
             if self.conn.websocket:
                 await self.conn.websocket.send(
@@ -661,7 +714,23 @@ class GeminiLiveProvider:
                         "session_id": self.conn.session_id
                     })
                 )
-                logger.bind(tag=TAG).debug("Sent TTS start signal")
+                logger.bind(tag=TAG).debug("Sent TTS initial start signal")
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error sending TTS initial start: {e}")
+
+    async def _send_tts_start(self):
+        """Signal to client that TTS sentence is starting"""
+        try:
+            if self.conn.websocket:
+                await self.conn.websocket.send(
+                    json.dumps({
+                        "type": "tts",
+                        "state": "sentence_start",
+                        "text": "",
+                        "session_id": self.conn.session_id
+                    })
+                )
+                logger.bind(tag=TAG).debug("Sent TTS sentence_start signal")
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error sending TTS start: {e}")
 
@@ -679,6 +748,48 @@ class GeminiLiveProvider:
                 logger.bind(tag=TAG).debug("Sent TTS stop signal")
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error sending TTS stop: {e}")
+
+    async def _cancel_response(self):
+        """Cancel the current response (e.g., when user presses abort button)"""
+        try:
+            if not self.response_in_progress:
+                logger.bind(tag=TAG).debug("No response in progress to cancel")
+                return
+
+            # Clear audio buffers
+            self.pcm_buffer = bytearray()
+            self.response_in_progress = False
+            self.current_transcription = ""
+            self.transcription_sent = False
+
+            # Send TTS stop signal to device
+            await self._send_tts_stop()
+
+            logger.bind(tag=TAG).info("Response cancelled")
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error cancelling response: {e}")
+
+    async def update_tools(self):
+        """Update session with latest tools (called when device MCP tools become available)
+
+        Note: Gemini Live doesn't support mid-session tool updates via the API.
+        We need to reconnect the session with the new tool configuration.
+        """
+        try:
+            if not self.is_connected:
+                logger.bind(tag=TAG).warning("Cannot update tools - not connected")
+                return
+
+            logger.bind(tag=TAG).info("Tool update requested - reconnecting session with new tools")
+
+            # Disconnect and reconnect to pick up new tools
+            await self.disconnect()
+            await self.connect()
+
+            logger.bind(tag=TAG).info("Session reconnected with updated tools")
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Failed to update tools: {e}")
 
     async def _buffer_audio_for_voiceprint(self, pcm_data: bytes):
         """Buffer PCM audio for voiceprint identification
@@ -846,3 +957,7 @@ class GeminiLiveProvider:
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error disconnecting: {e}")
+
+    async def cleanup(self):
+        """Clean up resources and close connections"""
+        await self.disconnect()

@@ -121,7 +121,7 @@ class ElevenLabsConversationalProvider:
         self.is_ready = False  # True only after conversation_initiation_metadata received
         self.is_processing = False
         self.is_music_playing = False
-        self.intentional_disconnect = False  # True when user/agent requests disconnect (prevents auto-reconnect)
+        self.user_aborted = False  # True after user tap-to-abort; blocks agent audio until user speaks again
 
         # Tasks
         self.receive_task = None
@@ -340,32 +340,29 @@ class ElevenLabsConversationalProvider:
         self.last_activity_time = time.time()
         self.conn.last_activity_time = self.last_activity_time * 1000
 
-        # Check if client has pressed abort button - this should disconnect/stop the session
-        if hasattr(self.conn, 'client_abort') and self.conn.client_abort:
-            logger.bind(tag=TAG).info("Client abort detected - stopping session")
-            # Block audio output completely
-            self.audio_output_blocked = True
-            # Clear output buffer to stop sending audio
-            self._output_pcm_buffer = b""
-            # Clear input buffer to stop sending to ElevenLabs
-            self._input_pcm_buffer = b""
-            # Reset audio session
-            self.audio_session_started = False
-            self.audio_frames_sent = 0
-            # Send TTS stop to ESP32 to halt playback immediately
-            await self._send_tts_stop()
-            # Reset abort flag immediately after handling
-            self.conn.client_abort = False
-            # Don't process any more events until user speaks again
-            return  # Skip processing this event
-
         event_type = event.get("type")
 
-        # Log event type only (full event details excluded for ping and audio to reduce noise)
+        # ALWAYS respond to pings to keep ElevenLabs WebSocket alive (even during abort)
         if event_type == "ping":
-            logger.bind(tag=TAG).debug(f"Received ElevenLabs event: {event_type}")
-        elif event_type == "audio":
-            pass  # Don't log every audio event
+            ping_event = event.get("ping_event", {})
+            await self._send_pong(ping_event.get("event_id"))
+            return
+
+        # Check if client has pressed abort button - stop agent speech, go to standby
+        if hasattr(self.conn, 'client_abort') and self.conn.client_abort:
+            logger.bind(tag=TAG).info("Client abort detected - stopping agent audio")
+            self.audio_output_blocked = True
+            self.user_aborted = True
+            self._output_pcm_buffer = b""
+            self.audio_session_started = False
+            self.audio_frames_sent = 0
+            await self._send_tts_stop()
+            self.conn.client_abort = False
+            return
+
+        # Log event type (exclude audio to reduce noise)
+        if event_type == "audio":
+            pass
         else:
             logger.bind(tag=TAG).info(f"Received ElevenLabs event: {event_type} | Full event: {event}")
 
@@ -389,11 +386,6 @@ class ElevenLabsConversationalProvider:
 
         elif event_type == "client_tool_call":
             await self._handle_client_tool_call(event)
-
-        elif event_type == "ping":
-            # Per SDK: event_id is nested under ping_event.event_id
-            ping_event = event.get("ping_event", {})
-            await self._send_pong(ping_event.get("event_id"))
 
         else:
             logger.bind(tag=TAG).info(f"Unhandled ElevenLabs event: {event_type} | keys: {list(event.keys())}")
@@ -452,6 +444,12 @@ class ElevenLabsConversationalProvider:
             if transcript:
                 logger.bind(tag=TAG).info(f"User said: {transcript}")
 
+                # User is actively speaking — clear abort state so agent can respond
+                if self.user_aborted:
+                    logger.bind(tag=TAG).info("User speaking detected via transcript - resuming after abort")
+                    self.user_aborted = False
+                    self.audio_output_blocked = False
+
                 # Save to dialogue for memory system
                 if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
                     self.conn.dialogue.put(Message(role="user", content=transcript))
@@ -477,21 +475,13 @@ class ElevenLabsConversationalProvider:
             response = response_event.get("agent_response", "")
 
             if response:
-                # Unblock audio output for new response (after interruption)
-                if self.audio_output_blocked:
+                # Unblock audio output for new response (after natural interruption only)
+                # Do NOT unblock if user explicitly aborted — wait for user to speak first
+                if self.audio_output_blocked and not self.user_aborted:
                     logger.bind(tag=TAG).info("Unblocking audio output for new agent response")
                     self.audio_output_blocked = False
 
                 logger.bind(tag=TAG).info(f"Agent said: {response}")
-
-                # Check if agent wants to end the call (various formats)
-                response_lower = response.lower()
-                end_call_markers = ["[end_call]", "[end call]", "bye-bye!", "goodbye!", "see you next time, bye"]
-                if any(marker in response_lower for marker in end_call_markers):
-                    logger.bind(tag=TAG).info("Agent indicated conversation end - will disconnect after audio completes")
-                    # Set flag to disconnect after audio finishes playing
-                    self.conn.close_after_chat = True
-                    self.intentional_disconnect = True
 
                 # Save to dialogue for memory system
                 if hasattr(self.conn, 'dialogue') and self.conn.dialogue:
@@ -676,8 +666,8 @@ class ElevenLabsConversationalProvider:
             audio_data: PCM16LE audio data at 24kHz from ElevenLabs
         """
         try:
-            # Block audio output if interrupted (until next agent response)
-            if self.audio_output_blocked:
+            # Block audio output if interrupted or music is playing
+            if self.audio_output_blocked or self.is_music_playing:
                 return
 
             # Send tts start once per session (not per utterance) to init ESP32 decoder
@@ -747,10 +737,6 @@ class ElevenLabsConversationalProvider:
         """
         try:
             if not self.is_connected or not self.ws:
-                # Don't auto-reconnect if this was an intentional disconnect (abort/end_call)
-                if self.intentional_disconnect:
-                    return
-
                 # Auto-connect if not yet connected
                 logger.bind(tag=TAG).info("Not connected yet, auto-connecting to ElevenLabs...")
                 success = await self.connect()
@@ -766,11 +752,9 @@ class ElevenLabsConversationalProvider:
             if self.is_music_playing:
                 return
 
-            # Skip if audio output is blocked (after abort until new user speech starts conversation)
-            if self.audio_output_blocked:
-                # User is speaking - unblock to allow new conversation
-                logger.bind(tag=TAG).info("User speaking detected - unblocking audio after abort")
-                self.audio_output_blocked = False
+            # If user_aborted, still send audio to ElevenLabs (keeps connection alive)
+            # but output audio is blocked via audio_output_blocked flag.
+            # Only _handle_user_transcript clears user_aborted when real speech detected.
 
             # Update activity timestamp
             import time
@@ -929,13 +913,6 @@ class ElevenLabsConversationalProvider:
                         pass
                 self._output_pcm_buffer = b""
             logger.bind(tag=TAG).debug(f"Audio flush complete — total frames sent: {self.audio_frames_sent}")
-
-            # Check if we should close connection after audio completes (e.g., from [end_call])
-            if hasattr(self.conn, 'close_after_chat') and self.conn.close_after_chat:
-                logger.bind(tag=TAG).info("Closing connection after audio as requested by agent [end_call]")
-                # Give a moment for final audio frame to be sent/played
-                await asyncio.sleep(0.5)
-                await self.conn.close()
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error in _send_audio_complete: {e}")
@@ -1165,9 +1142,6 @@ class ElevenLabsConversationalProvider:
     async def cleanup(self):
         """Clean up resources and disconnect"""
         try:
-            # Mark as intentional disconnect to prevent auto-reconnect
-            self.intentional_disconnect = True
-
             # Send TTS stop to ESP32 before closing (in case audio is playing)
             try:
                 await self._send_tts_stop()
