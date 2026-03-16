@@ -3,7 +3,9 @@ import re
 import time
 import json
 import random
+import shutil
 import difflib
+import hashlib
 import traceback
 import asyncio
 from pathlib import Path
@@ -20,6 +22,9 @@ from core.utils.util import audio_to_data
 TAG = __name__
 
 MUSIC_CACHE = {}
+
+# Cache for downloaded yt-dlp songs
+YT_DLP_CACHE_DIR = os.path.abspath("./data/music_cache")
 
 play_music_function_desc = {
     "type": "function",
@@ -145,6 +150,10 @@ async def handle_music_command(conn: "ConnectionHandler", text):
     clean_text = re.sub(r"[^\w\s]", "", text).strip()
     conn.logger.bind(tag=TAG).debug(f"Checking music command: {clean_text}")
 
+    # Extract song name from the text
+    potential_song = _extract_song_name(clean_text)
+
+    # Try local music first (if directory exists and has files)
     if os.path.exists(MUSIC_CACHE["music_dir"]):
         if time.time() - MUSIC_CACHE["scan_time"] > MUSIC_CACHE["refresh_time"]:
             MUSIC_CACHE["music_files"], MUSIC_CACHE["music_file_names"] = (
@@ -152,15 +161,30 @@ async def handle_music_command(conn: "ConnectionHandler", text):
             )
             MUSIC_CACHE["scan_time"] = time.time()
 
-        potential_song = _extract_song_name(clean_text)
         if potential_song:
             best_match = _find_best_match(potential_song, MUSIC_CACHE["music_files"])
             if best_match:
-                conn.logger.bind(tag=TAG).info(f"Best match found: {best_match}")
+                conn.logger.bind(tag=TAG).info(f"Local match found: {best_match}")
                 await play_local_music(conn, specific_file=best_match)
                 return True
-    await play_local_music(conn)
-    return True
+
+    # Try yt-dlp online search if enabled and we have a song name
+    yt_dlp_enabled = MUSIC_CACHE.get("music_config", {}).get("yt_dlp_enabled", False)
+    if yt_dlp_enabled and potential_song and potential_song != "random":
+        conn.logger.bind(tag=TAG).info(f"Searching online for: {potential_song}")
+        music_path = await _yt_dlp_download(conn, potential_song)
+        if music_path:
+            await _play_music_file(conn, music_path, potential_song)
+            return True
+        conn.logger.bind(tag=TAG).warning("yt-dlp search failed, falling back to local")
+
+    # Fall back to random local music
+    if MUSIC_CACHE.get("music_files"):
+        await play_local_music(conn)
+        return True
+
+    conn.logger.bind(tag=TAG).error("No music available (no local files, yt-dlp disabled or failed)")
+    return False
 
 
 def _get_random_play_prompt(song_name):
@@ -178,9 +202,137 @@ def _get_random_play_prompt(song_name):
     return random.choice(prompts)
 
 
-async def play_local_music(conn: "ConnectionHandler", specific_file=None):
-    """Play local music file (placeholder - not implemented)"""
-    pass
+def _is_yt_dlp_available():
+    """Check if yt-dlp is installed"""
+    return shutil.which("yt-dlp") is not None
+
+
+def _get_cache_path(song_name):
+    """Get cached file path for a song name"""
+    safe_name = hashlib.md5(song_name.lower().encode()).hexdigest()
+    return os.path.join(YT_DLP_CACHE_DIR, f"{safe_name}.mp3")
+
+
+async def _yt_dlp_download(conn, song_name):
+    """Search and download a song using yt-dlp
+
+    Returns the path to the downloaded audio file, or None on failure.
+    """
+    if not _is_yt_dlp_available():
+        conn.logger.bind(tag=TAG).error("yt-dlp is not installed. Install with: pip install yt-dlp")
+        return None
+
+    # Check cache first
+    cache_path = _get_cache_path(song_name)
+    if os.path.exists(cache_path):
+        conn.logger.bind(tag=TAG).info(f"Using cached song: {cache_path}")
+        return cache_path
+
+    # Ensure cache directory exists
+    os.makedirs(YT_DLP_CACHE_DIR, exist_ok=True)
+
+    # Get max duration from config (default 10 minutes)
+    max_duration = MUSIC_CACHE.get("music_config", {}).get("yt_dlp_max_duration", 600)
+
+    # Build yt-dlp command: search YouTube, download best audio, convert to mp3
+    cmd = [
+        "yt-dlp",
+        f"ytsearch1:{song_name}",          # Search YouTube, take first result
+        "--extract-audio",                   # Extract audio only
+        "--audio-format", "mp3",             # Convert to mp3
+        "--audio-quality", "5",              # Medium quality (0=best, 10=worst)
+        "--match-filter", f"duration<{max_duration}",  # Skip very long videos
+        "--no-playlist",                     # Don't download playlists
+        "--no-warnings",                     # Suppress warnings
+        "--quiet",                           # Minimal output
+        "--print", "after_move:filepath",    # Print final file path
+        "-o", cache_path.replace(".mp3", ".%(ext)s"),  # Output template
+    ]
+
+    conn.logger.bind(tag=TAG).info(f"Downloading: {song_name}")
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+
+        if process.returncode != 0:
+            error_msg = stderr.decode().strip() if stderr else "Unknown error"
+            conn.logger.bind(tag=TAG).error(f"yt-dlp failed: {error_msg}")
+            return None
+
+        # Get the actual output file path
+        output_path = stdout.decode().strip()
+        if output_path and os.path.exists(output_path):
+            # Rename to our cache path if different
+            if output_path != cache_path:
+                os.rename(output_path, cache_path)
+            conn.logger.bind(tag=TAG).info(f"Downloaded: {cache_path}")
+            return cache_path
+
+        # Fallback: check if cache_path exists (yt-dlp might have written directly)
+        if os.path.exists(cache_path):
+            return cache_path
+
+        conn.logger.bind(tag=TAG).error("yt-dlp produced no output file")
+        return None
+
+    except asyncio.TimeoutError:
+        conn.logger.bind(tag=TAG).error("yt-dlp download timed out (120s)")
+        return None
+    except Exception as e:
+        conn.logger.bind(tag=TAG).error(f"yt-dlp error: {e}")
+        return None
+
+
+async def _play_music_file(conn, music_path, song_name):
+    """Play a music file (local or downloaded) - handles both realtime and TTS pipeline modes"""
+    text = _get_random_play_prompt(song_name)
+    await send_stt_message(conn, text)
+    conn.dialogue.put(Message(role="assistant", content=text))
+
+    # Realtime mode: stream directly to ESP32
+    if hasattr(conn, 'use_realtime') and conn.use_realtime:
+        conn.logger.bind(tag=TAG).info(f"Realtime mode: Streaming music file - {music_path}")
+        await _stream_music_file_realtime(conn, music_path)
+        return
+
+    # Standard TTS queue mode
+    if conn.intent_type == "intent_llm":
+        conn.tts.tts_text_queue.put(
+            TTSMessageDTO(
+                sentence_id=conn.sentence_id,
+                sentence_type=SentenceType.FIRST,
+                content_type=ContentType.ACTION,
+            )
+        )
+    conn.tts.tts_text_queue.put(
+        TTSMessageDTO(
+            sentence_id=conn.sentence_id,
+            sentence_type=SentenceType.MIDDLE,
+            content_type=ContentType.TEXT,
+            content_detail=text,
+        )
+    )
+    conn.tts.tts_text_queue.put(
+        TTSMessageDTO(
+            sentence_id=conn.sentence_id,
+            sentence_type=SentenceType.MIDDLE,
+            content_type=ContentType.FILE,
+            content_file=music_path,
+        )
+    )
+    if conn.intent_type == "intent_llm":
+        conn.tts.tts_text_queue.put(
+            TTSMessageDTO(
+                sentence_id=conn.sentence_id,
+                sentence_type=SentenceType.LAST,
+                content_type=ContentType.ACTION,
+            )
+        )
 
 
 async def _stream_music_file_realtime(conn, music_path):
@@ -290,12 +442,11 @@ async def _stream_music_file_realtime(conn, music_path):
 
 
 async def play_local_music(conn, specific_file=None):
+    """Play a local music file"""
     global MUSIC_CACHE
     try:
         if not os.path.exists(MUSIC_CACHE["music_dir"]):
-            conn.logger.bind(tag=TAG).error(
-                f"Music directory not found: " + MUSIC_CACHE["music_dir"]
-            )
+            conn.logger.bind(tag=TAG).error(f"Music directory not found: {MUSIC_CACHE['music_dir']}")
             return
 
         if specific_file:
@@ -312,49 +463,7 @@ async def play_local_music(conn, specific_file=None):
             conn.logger.bind(tag=TAG).error(f"Music file not found: {music_path}")
             return
 
-        text = _get_random_play_prompt(selected_music)
-        await send_stt_message(conn, text)
-        conn.dialogue.put(Message(role="assistant", content=text))
-
-        # Check if we're in Realtime mode
-        if hasattr(conn, 'use_realtime') and conn.use_realtime:
-            conn.logger.bind(tag=TAG).info(f"Realtime mode: Streaming music file directly - {music_path}")
-            await _stream_music_file_realtime(conn, music_path)
-            return
-
-        # Standard TTS queue mode (ElevenLabs, etc.)
-        if conn.intent_type == "intent_llm":
-            conn.tts.tts_text_queue.put(
-                TTSMessageDTO(
-                    sentence_id=conn.sentence_id,
-                    sentence_type=SentenceType.FIRST,
-                    content_type=ContentType.ACTION,
-                )
-            )
-        conn.tts.tts_text_queue.put(
-            TTSMessageDTO(
-                sentence_id=conn.sentence_id,
-                sentence_type=SentenceType.MIDDLE,
-                content_type=ContentType.TEXT,
-                content_detail=text,
-            )
-        )
-        conn.tts.tts_text_queue.put(
-            TTSMessageDTO(
-                sentence_id=conn.sentence_id,
-                sentence_type=SentenceType.MIDDLE,
-                content_type=ContentType.FILE,
-                content_file=music_path,
-            )
-        )
-        if conn.intent_type == "intent_llm":
-            conn.tts.tts_text_queue.put(
-                TTSMessageDTO(
-                    sentence_id=conn.sentence_id,
-                    sentence_type=SentenceType.LAST,
-                    content_type=ContentType.ACTION,
-                )
-            )
+        await _play_music_file(conn, music_path, os.path.splitext(selected_music)[0])
 
     except Exception as e:
         conn.logger.bind(tag=TAG).error(f"Music playback failed: {str(e)}")

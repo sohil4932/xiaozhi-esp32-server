@@ -159,6 +159,10 @@ plugins:
       - ".mp3"
       - ".wav"
       - ".p3"
+    # yt-dlp online music search (requires: pip install yt-dlp)
+    # When enabled, searches YouTube for songs not found locally
+    yt_dlp_enabled: false
+    yt_dlp_max_duration: 600  # Max video duration in seconds (skip longer videos)
     refresh_time: 300 # 刷新音乐列表的时间间隔，单位为秒
   search_from_ragflow:
     # 知识库的描述信息，方便大语言模型知道什么时候调用
