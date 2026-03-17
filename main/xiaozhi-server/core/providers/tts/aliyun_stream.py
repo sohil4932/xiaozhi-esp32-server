@@ -1,4 +1,4 @@
-import random
+import os
 import uuid
 import json
 import hmac
@@ -8,16 +8,17 @@ import time
 import queue
 import asyncio
 import traceback
-from asyncio import Task
 import websockets
-import os
-from datetime import datetime
+
+from asyncio import Task
 from urllib import parse
+from datetime import datetime
+from typing import Callable, Any
+from config.logger import setup_logging
+from core.utils.tts import MarkdownCleaner
 from core.providers.tts.base import TTSProviderBase
 from core.providers.tts.dto.dto import SentenceType, ContentType, InterfaceType
-from core.utils.tts import MarkdownCleaner
-from core.utils import opus_encoder_utils, textUtils
-from config.logger import setup_logging
+
 
 TAG = __name__
 logger = setup_logging()
@@ -86,6 +87,12 @@ class AccessToken:
 
 
 class TTSProvider(TTSProviderBase):
+    TTS_PARAM_CONFIG = [
+        ("ttsVolume", "volume", 0, 100, 50, int),
+        ("ttsRate", "speech_rate", -500, 500, 0, int),
+        ("ttsPitch", "pitch_rate", -500, 500, 0, int),
+    ]
+
     def __init__(self, config, delete_audio_file):
         super().__init__(config, delete_audio_file)
 
@@ -97,7 +104,7 @@ class TTSProvider(TTSProviderBase):
         self.access_key_secret = config.get("access_key_secret")
         self.appkey = config.get("appkey")
         self.format = config.get("format", "pcm")
-        self.audio_file_type = config.get("format", "pcm")
+        self.report_on_last = True
 
         # 音色配置 - CosyVoice大模型音色
         if config.get("private_voice"):
@@ -114,6 +121,9 @@ class TTSProvider(TTSProviderBase):
 
         pitch_rate = config.get("pitch_rate", "0")
         self.pitch_rate = int(pitch_rate) if pitch_rate else 0
+
+        # 应用百分比调整（如果存在），否则使用公有化配置
+        self._apply_percentage_params(config)
 
         # WebSocket配置
         self.host = config.get("host", "nls-gateway-cn-beijing.aliyuncs.com")
@@ -462,6 +472,24 @@ class TTSProvider(TTSProviderBase):
         # 监听任务退出时清理引用
         finally:
             self._monitor_task = None
+
+    def audio_to_opus_data_stream(
+        self, audio_file_path, callback: Callable[[Any], Any] = None
+    ):
+        """重写父类方法：使用独立的临时编码器处理音频文件，避免与TTS流式编码器并发冲突。
+        双流式TTS中，monitor任务在event loop线程接收TTS音频并使用self.opus_encoder编码，
+        同时tts_text_priority_thread处理音乐文件也使用self.opus_encoder，
+        共享的encoder.buffer非线程安全，并发访问会导致SILK resampler断言失败。
+        """
+        from core.utils.util import audio_to_data_stream
+
+        return audio_to_data_stream(
+            audio_file_path,
+            is_opus=True,
+            callback=callback,
+            sample_rate=self.conn.sample_rate,
+            opus_encoder=None,
+        )
 
     def to_tts(self, text: str) -> list:
         """非流式TTS处理，用于测试及保存音频文件的场景"""

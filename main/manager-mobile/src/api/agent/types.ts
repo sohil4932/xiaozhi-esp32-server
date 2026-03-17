@@ -11,6 +11,7 @@ export interface Agent {
   summaryMemory: string | null
   lastConnectedAt: string | null
   deviceCount: number
+  tags: Record<string, string>[]
 }
 
 // 智能体创建数据类型
@@ -42,7 +43,20 @@ export interface AgentDetail {
   createdAt: string
   updater: string
   updatedAt: string
+  ttsLanguage: string
+  ttsVolume: number
+  ttsRate: number
+  ttsPitch: number
   functions: AgentFunction[]
+  contextProviders: Providers[]
+}
+
+export interface Providers {
+  url: string
+  headers: Array<{
+    key: string
+    value: string
+  }>
 }
 
 export interface AgentFunction {

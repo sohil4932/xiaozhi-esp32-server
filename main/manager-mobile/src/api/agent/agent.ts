@@ -183,3 +183,39 @@ export function createVoicePrint(data: { agentId: string, audioId: string, sourc
     },
   })
 }
+
+// 获取智能体标签
+export function getAgentTags(agentId: string) {
+  return http.Get<any[]>(`/agent/${agentId}/tags`, {
+    meta: {
+      ignoreAuth: false,
+      toast: false,
+    },
+    cacheFor: {
+      expire: 0,
+    },
+  })
+}
+
+// 更新智能体标签
+export function updateAgentTags(agentId: string, data) {
+  return http.Put(`/agent/${agentId}/tags`, data, {
+    meta: {
+      ignoreAuth: false,
+      isExposeError: true,
+    },
+  })
+}
+
+// 获取所有语言
+export function getAllLanguage(modelId: string) {
+  return http.Get<{ id: string, name: string, languages: string }[]>(`/models/${modelId}/voices`, {
+    meta: {
+      ignoreAuth: false,
+      toast: false,
+    },
+    cacheFor: {
+      expire: 0,
+    },
+  })
+}

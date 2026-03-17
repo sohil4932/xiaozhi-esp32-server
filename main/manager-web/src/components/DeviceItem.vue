@@ -1,13 +1,15 @@
 <template>
   <div class="device-item">
     <div style="display: flex;justify-content: space-between;">
-      <div style="font-weight: 700;font-size: 18px;text-align: left;color: #3d4566;">
+    <el-tooltip :content="device.agentName" placement="top" effect="light">
+      <div class="device-item-title">
         {{ device.agentName }}
       </div>
+    </el-tooltip>
       <div>
         <img src="@/assets/home/delete.png" alt="" style="width: 18px;height: 18px;margin-right: 10px;"
           @click.stop="handleDelete" />
-        <el-tooltip class="item" effect="dark" :content="device.systemPrompt" placement="top"
+        <el-tooltip class="item" effect="light" :content="device.systemPrompt" placement="top"
           popper-class="custom-tooltip">
           <img src="@/assets/home/info.png" alt="" style="width: 18px;height: 18px;" />
         </el-tooltip>
@@ -31,7 +33,7 @@
       </div>
       <div :class="['settings-btn', { 'disabled-btn': device.memModelId === 'Memory_nomem' }]"
         @click="handleChatHistory">
-        <el-tooltip v-if="device.memModelId === 'Memory_nomem'" :content="$t('home.enableMemory')" placement="top">
+        <el-tooltip effect="light" v-if="device.memModelId === 'Memory_nomem'" :content="$t('home.enableMemory')" placement="top">
           <span>{{ $t('home.chatHistory') }}</span>
         </el-tooltip>
         <span v-else>{{ $t('home.chatHistory') }}</span>
@@ -39,6 +41,11 @@
     </div>
     <div class="version-info">
       <div>{{ $t('home.lastConversation') }}：{{ formattedLastConnectedTime }}</div>
+      <el-tooltip :content="tags.join()" placement="top" effect="light">
+        <div class="version-info-scroll">
+          {{ tags.join() }}
+        </div>
+      </el-tooltip>
     </div>
   </div>
 </template>
@@ -81,6 +88,10 @@ export default {
       } else {
         return this.device.lastConnectedAt;
       }
+    },
+    tags() {
+      if (!this.device.tags) return [];
+      return this.device.tags.map((tag) => tag.tagName);
     }
   },
   methods: {
@@ -102,16 +113,26 @@ export default {
       }
       this.$emit('chat-history', { agentId: this.device.agentId, agentName: this.device.agentName })
     }
-  }
+  },
 }
 </script>
-<style scoped>
+<style lang="scss" scoped>
 .device-item {
   width: 342px;
   border-radius: 20px;
   background: #fafcfe;
-  padding: 22px;
+  padding: 22px 22px 14px;
   box-sizing: border-box;
+  &-title {
+    flex: 1;
+    font-weight: bold;
+    font-size: 18px;
+    color: #3d4566;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+  }
 }
 
 .device-name {
@@ -138,10 +159,30 @@ export default {
 .version-info {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   margin-top: 15px;
   font-size: 12px;
   color: #979db1;
   font-weight: 400;
+  &-scroll {
+    margin-left: 20px;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+    text-align: right;
+  }
+}
+
+.more-tag {
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.all-tags-popover {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .disabled-btn {

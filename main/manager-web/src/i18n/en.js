@@ -25,7 +25,7 @@ export default {
   'header.featureManagement': 'System Feature Management',
   'header.changePassword': 'Change Password',
   'header.logout': 'Logout',
-  'header.searchPlaceholder': 'Search name or mac',
+  'header.searchPlaceholder': 'Name, tag or MAC search',
 
   // McpToolCallDialog component text
   'mcpToolCall.title': 'Tool Call',
@@ -463,7 +463,6 @@ export default {
   'device.getListFailed': 'Failed to fetch device list',
   'device.autoUpdateEnabled': 'Auto update enabled',
   'device.autoUpdateDisabled': 'Auto update disabled',
-  'device.batchUnbindSuccess': 'Successfully unbound {count} devices',
   'device.getFirmwareTypeFailed': 'Failed to fetch firmware type',
   'device.deviceStatus': 'Status',
   'device.online': 'Online',
@@ -663,6 +662,7 @@ export default {
   'language.en': 'English',
   'language.de': 'Deutsch',
   'language.vi': 'Tiếng Việt',
+  'language.ptBR': 'Português (Brasil)',
 
   // Home page text
   'home.addAgent': 'Add Agent',
@@ -746,6 +746,7 @@ export default {
 
   // Role configuration page text
   'roleConfig.title': 'Role Configuration',
+  'roleConfig.addTag': 'Add New Tag',
   'roleConfig.restartNotice': 'After saving the configuration, you need to restart the device for the new configuration to take effect.',
   'roleConfig.saveConfig': 'Save Configuration',
   'roleConfig.reset': 'Reset',
@@ -762,7 +763,17 @@ export default {
   'roleConfig.memoryHis': 'Memory',
   'roleConfig.memory': 'Memory Model',
   'roleConfig.intent': 'Intent Recognition',
+  'roleConfig.language': 'Select Language',
+  'roleConfig.selectLanguage': 'Please select language',
   'roleConfig.voiceType': 'Voice Type',
+  'roleConfig.ttsVolume': 'Volume',
+  'roleConfig.ttsRate': 'Speed',
+  'roleConfig.ttsPitch': 'Pitch',
+  'roleConfig.ttsAdvanced': 'TTS Parameters',
+  'roleConfig.advancedSettings': 'Speech rate and pitch',
+  'roleConfig.volumeHint': '-100=Min, 0=Standard, 100=Max',
+  'roleConfig.speedHint': '-100=Slowest, 0=Standard, 100=Fastest',
+  'roleConfig.pitchHint': '-100=Lowest, 0=Standard, 100=Highest',
   'roleConfig.pleaseEnterContent': 'Please enter content',
   'roleConfig.pleaseEnterLangCode': 'Please enter language code, e.g.: en_US',
   'roleConfig.pleaseEnterLangName': 'Please enter interaction language, e.g.: English',
@@ -1121,6 +1132,9 @@ export default {
   'voiceClone.platformNamePlaceholder': 'Please select platform name',
   'voiceClone.voiceIdPlaceholder': 'Please enter voice ID and press Enter',
   'voiceClone.userIdPlaceholder': 'Please enter keyword to select account owner',
+  'voiceClone.languages': 'Languages',
+  'voiceClone.languagesPlaceholder': 'Please enter languages, e.g.: Chinese, English',
+  'voiceClone.languagesRequired': 'Please enter languages',
   'voiceClone.waitingUpload': 'Waiting for upload',
   'voiceClone.waitingTraining': 'Waiting for clone',
   'voiceClone.training': 'Training',

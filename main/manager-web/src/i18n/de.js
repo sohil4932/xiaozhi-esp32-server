@@ -25,7 +25,7 @@ export default {
   'header.featureManagement': 'Systemfunktionsverwaltung',
   'header.changePassword': 'Passwort ändern',
   'header.logout': 'Abmelden',
-  'header.searchPlaceholder': 'Namen oder MAC suchen',
+  'header.searchPlaceholder': 'Name, Tag oder Mac-Suche',
 
   // McpToolCallDialog component text
   'mcpToolCall.title': 'Werkzeugaufruf',
@@ -463,7 +463,6 @@ export default {
   'device.getListFailed': 'Geräteliste konnte nicht abgerufen werden',
   'device.autoUpdateEnabled': 'Automatische Aktualisierung aktiviert',
   'device.autoUpdateDisabled': 'Automatische Aktualisierung deaktiviert',
-  'device.batchUnbindSuccess': 'Erfolgreich {count} Geräte entbunden',
   'device.getFirmwareTypeFailed': 'Firmware-Typ konnte nicht abgerufen werden',
   'device.deviceStatus': 'Status',
   'device.online': 'Online',
@@ -663,6 +662,7 @@ export default {
   'language.en': 'English',
   'language.de': 'Deutsch',
   'language.vi': 'Tiếng Việt',
+  'language.ptBR': 'Português (Brasil)',
 
   // Home page text
   'home.addAgent': 'Agent hinzufügen',
@@ -746,7 +746,8 @@ export default {
 
   // Role configuration page text
   'roleConfig.title': 'Rollenkonfiguration',
-  'roleConfig.restartNotice': 'Nach dem Speichern der Konfiguration müssen Sie das Gerät neu starten, damit die neue Konfiguration wirksam wird.',
+  'roleConfig.addTag': 'Neues Label hinzufügen',
+  'roleConfig.restartNotice': 'Neustart nach Konfigurationsspeichern zur Aktivierung.',
   'roleConfig.saveConfig': 'Konfiguration speichern',
   'roleConfig.reset': 'Zurücksetzen',
   'roleConfig.agentName': 'Spitzname',
@@ -762,7 +763,17 @@ export default {
   'roleConfig.memoryHis': 'Speicher',
   'roleConfig.memory': 'Speicher',
   'roleConfig.intent': 'Intent',
+  'roleConfig.language': 'Sprache auswählen',
+  'roleConfig.selectLanguage': 'Bitte Sprache auswählen',
   'roleConfig.voiceType': 'Stimmtyp',
+  'roleConfig.ttsVolume': 'Lautstärke',
+  'roleConfig.ttsRate': 'Geschwindigkeit',
+  'roleConfig.ttsPitch': 'Tonhöhe',
+  'roleConfig.ttsAdvanced': 'TTS-Parameter',
+  'roleConfig.advancedSettings': 'Sprachgeschwindigkeit',
+  'roleConfig.volumeHint': '-100=Min, 0=Standard, 100=Max',
+  'roleConfig.speedHint': '-100=Langsamste, 0=Standard, 100=Schnellste',
+  'roleConfig.pitchHint': '-100=Niedrigste, 0=Standard, 100=Höchste',
   'roleConfig.pleaseEnterContent': 'Bitte Inhalt eingeben',
   'roleConfig.pleaseEnterLangCode': 'Bitte Sprachcode eingeben, z.B.: en_US',
   'roleConfig.pleaseEnterLangName': 'Bitte Interaktionssprache eingeben, z.B.: Englisch',
@@ -1121,6 +1132,9 @@ export default {
   'voiceClone.platformNamePlaceholder': 'Bitte Plattformname auswählen',
   'voiceClone.voiceIdPlaceholder': 'Bitte Stimmen-ID eingeben und Enter drücken',
   'voiceClone.userIdPlaceholder': 'Bitte Schlüsselwort eingeben, um Kontoinhaber auszuwählen',
+  'voiceClone.languages': 'Sprachen',
+  'voiceClone.languagesPlaceholder': 'Bitte Sprachen eingeben, z.B.: Deutsch, English',
+  'voiceClone.languagesRequired': 'Bitte Sprachen eingeben',
   'voiceClone.waitingUpload': 'Wartet auf Upload',
   'voiceClone.waitingTraining': 'Wartet auf Klon',
   'voiceClone.training': 'Training',

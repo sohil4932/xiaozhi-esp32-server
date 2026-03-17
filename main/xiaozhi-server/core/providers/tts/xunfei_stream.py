@@ -9,9 +9,10 @@ import hashlib
 import asyncio
 import traceback
 import websockets
+
 from asyncio import Task
+from typing import Callable, Any
 from config.logger import setup_logging
-from core.utils import opus_encoder_utils
 from core.utils.tts import MarkdownCleaner
 from urllib.parse import urlencode, urlparse
 from core.providers.tts.base import TTSProviderBase
@@ -59,6 +60,12 @@ class XunfeiWSAuth:
 
 
 class TTSProvider(TTSProviderBase):
+    TTS_PARAM_CONFIG = [
+        ("ttsVolume", "volume", 0, 100, 50, int),
+        ("ttsRate", "speed", 0, 100, 50, int),
+        ("ttsPitch", "pitch", 0, 100, 50, int),
+    ]
+
     def __init__(self, config, delete_audio_file):
         super().__init__(config, delete_audio_file)
 
@@ -69,6 +76,7 @@ class TTSProvider(TTSProviderBase):
         self.app_id = config.get("app_id")
         self.api_key = config.get("api_key")
         self.api_secret = config.get("api_secret")
+        self.report_on_last = True
 
         # 接口地址
         self.api_url = config.get("api_url", "wss://cbm01.cn-huabei-1.xf-yun.com/v1/private/mcd9m97e6")
@@ -87,6 +95,9 @@ class TTSProvider(TTSProviderBase):
 
         pitch = config.get("pitch", "50")
         self.pitch = int(pitch) if pitch else 50
+
+        # 应用百分比调整（如果存在），否则使用公有化配置
+        self._apply_percentage_params(config)
 
         # 音频编码配置
         self.format = config.get("format", "raw")
@@ -472,9 +483,27 @@ class TTSProvider(TTSProviderBase):
             return audio_data
         except Exception as e:
             logger.bind(tag=TAG).error(f"生成音频数据失败: {str(e)}")
-            return []        
-    
-    def _build_base_request(self, status,text=" "):
+            return []
+
+    def audio_to_opus_data_stream(
+        self, audio_file_path, callback: Callable[[Any], Any] = None
+    ):
+        """重写父类方法：使用独立的临时编码器处理音频文件，避免与TTS流式编码器并发冲突。
+        双流式TTS中，monitor任务在event loop线程接收TTS音频并使用self.opus_encoder编码，
+        同时tts_text_priority_thread处理音乐文件也使用self.opus_encoder，
+        共享的encoder.buffer非线程安全，并发访问会导致SILK resampler断言失败。
+        """
+        from core.utils.util import audio_to_data_stream
+
+        return audio_to_data_stream(
+            audio_file_path,
+            is_opus=True,
+            callback=callback,
+            sample_rate=self.conn.sample_rate,
+            opus_encoder=None,
+        )
+
+    def _build_base_request(self, status, text=" "):
         """构建基础请求结构"""
         return {
             "header": {

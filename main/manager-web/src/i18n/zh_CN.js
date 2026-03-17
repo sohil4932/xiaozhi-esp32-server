@@ -25,7 +25,7 @@ export default {
   'header.featureManagement': '系统功能配置',
   'header.changePassword': '修改密码',
   'header.logout': '退出登录',
-  'header.searchPlaceholder': '输入名称或mac搜索',
+  'header.searchPlaceholder': '名称、标签或mac搜索',
 
   // McpToolCallDialog组件文本
   'mcpToolCall.title': '工具调用',
@@ -189,7 +189,7 @@ export default {
   'editVoiceDialog.remarkPlaceholder': '请输入备注内容',
   'editVoiceDialog.generatePreview': '生成试听',
   'editVoiceDialog.defaultVoiceName': '湾湾小何',
-  'editVoiceDialog.defaultLanguageType': '中文',
+  'editVoiceDialog.defaultLanguageType': '普通话',
   'editVoiceDialog.requiredVoiceCode': '请输入音色编码',
   'editVoiceDialog.requiredVoiceName': '请输入音色名称',
 
@@ -463,7 +463,6 @@ export default {
   'device.getListFailed': '获取设备列表失败',
   'device.autoUpdateEnabled': '已设置成自动升级',
   'device.autoUpdateDisabled': '已关闭自动升级',
-  'device.batchUnbindSuccess': '成功解绑 {count} 台设备',
   'device.getFirmwareTypeFailed': '获取固件类型失败',
   'device.deviceStatus': '状态',
   'device.online': '在线',
@@ -663,6 +662,7 @@ export default {
   'language.en': 'English',
   'language.de': 'Deutsch',
   'language.vi': 'Tiếng Việt',
+  'language.ptBR': 'Português (Brasil)',
 
   // 首页文本
   'home.addAgent': '添加智能体',
@@ -746,6 +746,7 @@ export default {
 
   // 角色配置页面文本
   'roleConfig.title': '角色配置',
+  'roleConfig.addTag': '添加新标签',
   'roleConfig.restartNotice': '保存配置后，需要重启设备，新的配置才会生效。',
   'roleConfig.saveConfig': '保存配置',
   'roleConfig.reset': '重置',
@@ -760,9 +761,19 @@ export default {
   'roleConfig.vllm': '视觉大模型(VLLM)',
   'roleConfig.intent': '意图识别(Intent)',
   'roleConfig.memoryHis': '记忆',
-  'roleConfig.memory': '记忆模式',
+  'roleConfig.memory': '记忆模式(Mem)',
   'roleConfig.tts': '语音合成(TTS)',
+  'roleConfig.language': '对话语言(Lang)',
+  'roleConfig.selectLanguage': '请选择语言',
   'roleConfig.voiceType': '声音音色(Voice)',
+  'roleConfig.ttsVolume': '音量',
+  'roleConfig.ttsRate': '语速',
+  'roleConfig.ttsPitch': '音调',
+  'roleConfig.ttsAdvanced': 'TTS参数',
+  'roleConfig.advancedSettings': '语速音调',
+  'roleConfig.volumeHint': '-100=最小, 0=标准, 100=最大',
+  'roleConfig.speedHint': '-100=最慢, 0=标准, 100=最快',
+  'roleConfig.pitchHint': '-100=最低, 0=标准, 100=最高',
   'roleConfig.pleaseEnterContent': '请输入内容',
   'roleConfig.pleaseEnterLangCode': '请输入语言编码，如：zh_CN',
   'roleConfig.pleaseEnterLangName': '请输入交互语种，如：中文',
@@ -1121,6 +1132,9 @@ export default {
   'voiceClone.platformNamePlaceholder': '请选择平台名称',
   'voiceClone.voiceIdPlaceholder': '请输入音色ID并按回车',
   'voiceClone.userIdPlaceholder': '请输入关键词选择归属账号',
+  'voiceClone.languages': '语言',
+  'voiceClone.languagesPlaceholder': '请输入语言，如：中文、English',
+  'voiceClone.languagesRequired': '请输入语言',
   'voiceClone.waitingUpload': '待上传',
   'voiceClone.waitingTraining': '待复刻',
   'voiceClone.training': '训练中',

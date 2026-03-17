@@ -25,7 +25,7 @@ export default {
   'header.featureManagement': 'Cấu hình chức năng hệ thống',
   'header.changePassword': 'Đổi mật khẩu',
   'header.logout': 'Đăng xuất',
-  'header.searchPlaceholder': 'Tìm tên hoặc MAC',
+  'header.searchPlaceholder': 'Tên, thẻ hoặc tìm kiếm mac',
 
   // McpToolCallDialog component text
   'mcpToolCall.title': 'Gọi công cụ',
@@ -463,7 +463,6 @@ export default {
   'device.getListFailed': 'Không thể tải danh sách thiết bị',
   'device.autoUpdateEnabled': 'Đã bật tự động cập nhật',
   'device.autoUpdateDisabled': 'Đã tắt tự động cập nhật',
-  'device.batchUnbindSuccess': 'Đã hủy liên kết thành công {count} thiết bị',
   'device.getFirmwareTypeFailed': 'Không thể lấy loại firmware',
   'device.deviceStatus': 'Trạng thái',
   'device.online': 'Trực tuyến',
@@ -663,6 +662,7 @@ export default {
   'language.en': 'English',
   'language.de': 'Deutsch',
   'language.vi': 'Tiếng Việt',
+  'language.ptBR': 'Português (Brasil)',
 
   // Home page text
   'home.addAgent': 'Thêm tác nhân',
@@ -746,6 +746,7 @@ export default {
 
   // Role configuration page text
   'roleConfig.title': 'Vai trò',
+  'roleConfig.addTag': 'Thêm mới nhãn',
   'roleConfig.restartNotice': 'Sau khi lưu cấu hình, bạn cần khởi động lại thiết bị để cấu hình mới có hiệu lực.',
   'roleConfig.saveConfig': 'Lưu cấu hình',
   'roleConfig.reset': 'Đặt lại',
@@ -762,7 +763,17 @@ export default {
   'roleConfig.memoryHis': 'Bộ nhớ',
   'roleConfig.memory': 'Mô hình bộ nhớ',
   'roleConfig.intent': 'Nhận dạng ý định',
+  'roleConfig.language': 'Chọn ngôn ngữ',
+  'roleConfig.selectLanguage': 'Vui lòng chọn ngôn ngữ',
   'roleConfig.voiceType': 'Loại giọng nói',
+  'roleConfig.ttsVolume': 'Âm lượng',
+  'roleConfig.ttsRate': 'Tốc độ',
+  'roleConfig.ttsPitch': 'Cao độ',
+  'roleConfig.ttsAdvanced': 'Tham số TTS',
+  'roleConfig.advancedSettings': 'Giọng nói',
+  'roleConfig.volumeHint': '-100=Tối thiểu, 0=Tiêu chuẩn, 100=Tối đa',
+  'roleConfig.speedHint': '-100=Chậm nhất, 0=Tiêu chuẩn, 100=Nhanh nhất',
+  'roleConfig.pitchHint': '-100=Thấp nhất, 0=Tiêu chuẩn, 100=Cao nhất',
   'roleConfig.pleaseEnterContent': 'Vui lòng nhập nội dung',
   'roleConfig.pleaseEnterLangCode': 'Vui lòng nhập mã ngôn ngữ, ví dụ: en_US',
   'roleConfig.pleaseEnterLangName': 'Vui lòng nhập ngôn ngữ tương tác, ví dụ: Tiếng Anh',
@@ -1121,6 +1132,9 @@ export default {
   'voiceClone.platformNamePlaceholder': 'Vui lòng chọn tên nền tảng',
   'voiceClone.voiceIdPlaceholder': 'Vui lòng nhập ID giọng nói và nhấn Enter',
   'voiceClone.userIdPlaceholder': 'Vui lòng nhập từ khóa để chọn chủ sở hữu tài khoản',
+  'voiceClone.languages': 'Ngôn ngữ',
+  'voiceClone.languagesPlaceholder': 'Vui lòng nhập ngôn ngữ, ví dụ: Tiếng Việt, English',
+  'voiceClone.languagesRequired': 'Vui lòng nhập ngôn ngữ',
   'voiceClone.waitingUpload': 'Đang chờ tải lên',
   'voiceClone.waitingTraining': 'Đang chờ nhân bản',
   'voiceClone.training': 'Đang huấn luyện',

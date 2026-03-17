@@ -13,7 +13,7 @@ from typing import Callable, Any
 from abc import ABC, abstractmethod
 from config.logger import setup_logging
 from core.utils import opus_encoder_utils
-from core.utils.tts import MarkdownCleaner
+from core.utils.tts import MarkdownCleaner, convert_percentage_to_range
 from core.utils.output_counter import add_device_output
 from core.handle.reportHandle import enqueue_tts_report
 from core.handle.sendAudioHandle import sendAudioMessage
@@ -40,6 +40,7 @@ class TTSProviderBase(ABC):
         self.tts_audio_queue = queue.Queue()
         self.tts_audio_first_sentence = True
         self.before_stop_play_files = []
+        self.report_on_last = False
 
         self.tts_text_buff = []
         self.punctuations = (
@@ -322,7 +323,7 @@ class TTSProviderBase(ABC):
     def _audio_play_priority_thread(self):
         # 需要上报的文本和音频列表
         enqueue_text = None
-        enqueue_audio = None
+        enqueue_audio = []
         while not self.conn.stop_event.is_set():
             text = None
             try:
@@ -342,14 +343,24 @@ class TTSProviderBase(ABC):
 
                 # 收到下一个文本开始或会话结束时进行上报
                 if sentence_type is not SentenceType.MIDDLE:
-                    # 上报TTS数据
-                    if enqueue_text is not None and enqueue_audio is not None:
-                        enqueue_tts_report(self.conn, enqueue_text, enqueue_audio)
-                    enqueue_audio = []
-                    enqueue_text = text
+                    if self.report_on_last:
+                        # 累积模式：适用于全程只有一个语音流的TTS（如seed-tts-2.0）
+                        # FIRST时只记录文本，音频持续累积，仅在LAST时统一上报
+                        if text:
+                            enqueue_text = text
+                        if sentence_type == SentenceType.LAST:
+                            enqueue_tts_report(self.conn, enqueue_text, enqueue_audio)
+                            enqueue_audio = []
+                            enqueue_text = None
+                    else:
+                        # 非累积模式：每个句子分别上报
+                        if enqueue_text is not None:
+                            enqueue_tts_report(self.conn, enqueue_text, enqueue_audio)
+                        enqueue_audio = []
+                        enqueue_text = text
 
                 # 收集上报音频数据
-                if isinstance(audio_datas, bytes) and enqueue_audio is not None:
+                if isinstance(audio_datas, bytes):
                     enqueue_audio.append(audio_datas)
 
                 # 发送音频
@@ -463,3 +474,10 @@ class TTSProviderBase(ABC):
                 self.processed_chars += len(full_text)
                 return True
         return False
+
+    def _apply_percentage_params(self, config):
+        """根据子类定义的 TTS_PARAM_CONFIG 批量应用百分比参数"""
+        for config_key, attr_name, min_val, max_val, base_val, transform in self.TTS_PARAM_CONFIG:
+            if config_key in config:
+                val = convert_percentage_to_range(config[config_key], min_val, max_val, base_val)
+                setattr(self, attr_name, transform(val) if transform else val)
