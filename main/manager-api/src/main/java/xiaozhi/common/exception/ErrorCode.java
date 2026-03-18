@@ -245,4 +245,10 @@ public interface ErrorCode {
     int DEVICE_NOT_EXIST = 10194; // 设备不存在
     int OTA_UPLOAD_COUNT_EXCEED = 10195; // OTA上传次数超过限制
 
+    // Hardware device binding error codes
+    int HARDWARE_CODE_NOT_FOUND = 10196; // Hardware code not found
+    int HARDWARE_ALREADY_BOUND = 10197; // Hardware device already bound
+    int HARDWARE_CODE_DUPLICATE = 10198; // Hardware code already exists
+    int HARDWARE_MAC_DUPLICATE = 10199; // MAC address already registered in hardware table
+
 }

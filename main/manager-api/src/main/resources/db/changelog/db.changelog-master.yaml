@@ -529,3 +529,10 @@ databaseChangeLog:
         - sqlFile:
             encoding: utf8
             path: classpath:db/changelog/202602051125.sql
+  - changeSet:
+      id: 202603171200
+      author: SohilPatel
+      changes:
+        - sqlFile:
+            encoding: utf8
+            path: classpath:db/changelog/202603171200.sql

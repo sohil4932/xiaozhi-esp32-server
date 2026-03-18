@@ -45,8 +45,12 @@ class MemoryProvider(MemoryProviderBase):
         self.last_profile_content = ""  # Cache for user profile from UserMemory
 
         try:
-            # Check if user profile mode is enabled
-            self.enable_user_profile = config.get("enable_user_profile", False)
+            # Check if user profile mode is enabled (handle string "true"/"false" from GUI)
+            user_profile_val = config.get("enable_user_profile", False)
+            if isinstance(user_profile_val, str):
+                self.enable_user_profile = user_profile_val.lower() == "true"
+            else:
+                self.enable_user_profile = bool(user_profile_val)
             
             # Get configuration parameters
             database_provider = config.get("database_provider", "sqlite")
@@ -109,38 +113,51 @@ class MemoryProvider(MemoryProviderBase):
                 # - qwen provider uses dashscope_base_url
                 # - openai provider uses openai_base_url
                 # Priority: embedding_xxx_base_url > embedding_base_url > xxx_base_url
-                if "embedding_base_url" in config:
+                # Only pass base_url for non-default endpoints (custom/proxy URLs)
+                _default_openai = {"", "https://api.openai.com/v1", "https://api.openai.com/v1/"}
+                if "embedding_base_url" in config and config["embedding_base_url"].strip():
+                    base_url = config["embedding_base_url"].strip()
                     if embedding_provider == "qwen":
-                        embedder_config["dashscope_base_url"] = config["embedding_base_url"]
-                    else:
-                        embedder_config["openai_base_url"] = config["embedding_base_url"]
-                # Embedding-specific base_url (higher priority)
+                        embedder_config["dashscope_base_url"] = base_url
+                    elif base_url not in _default_openai:
+                        embedder_config["openai_base_url"] = base_url
                 if "embedding_openai_base_url" in config:
-                    embedder_config["openai_base_url"] = config["embedding_openai_base_url"]
-                if "embedding_dashscope_base_url" in config:
-                    embedder_config["dashscope_base_url"] = config["embedding_dashscope_base_url"]
+                    val = config["embedding_openai_base_url"].strip() if config["embedding_openai_base_url"] else ""
+                    if val and val not in _default_openai:
+                        embedder_config["openai_base_url"] = val
+                if "embedding_dashscope_base_url" in config and config["embedding_dashscope_base_url"].strip():
+                    embedder_config["dashscope_base_url"] = config["embedding_dashscope_base_url"].strip()
+                # Embedding dimensions (must be int for pydantic validation)
+                if "embedding_dims" in config:
+                    try:
+                        embedder_config["embedding_dims"] = int(config["embedding_dims"])
+                    except (ValueError, TypeError):
+                        pass
                 powermem_config["embedder"] = {
                     "provider": embedding_provider,
                     "config": embedder_config
                 }
 
-            # Initialize memory client based on mode
-            if self.enable_user_profile:
-                from powermem import UserMemory
-                self.memory_client = UserMemory(config=powermem_config)
-                memory_mode = "UserMemory (用户画像模式)"
-            else:
-                from powermem import AsyncMemory
-                self.memory_client = AsyncMemory(config=powermem_config)
-                memory_mode = "AsyncMemory (普通记忆模式)"
+            # Initialize memory client based on mode, with fallback for strict validation
+            try:
+                self._init_memory_client(powermem_config)
+            except Exception as init_err:
+                if "extra_forbidden" in str(init_err) or "Extra inputs are not permitted" in str(init_err):
+                    # Installed powermem version may not support fields like openai_base_url;
+                    # retry with only the core fields powermem always accepts
+                    logger.bind(tag=TAG).warning(
+                        f"Retrying PowerMem init with core fields only: {init_err}"
+                    )
+                    core_fields = {"api_key", "model", "embedding_dims"}
+                    for section in ("embedder", "llm"):
+                        cfg = powermem_config.get(section, {}).get("config", {})
+                        for key in list(cfg.keys()):
+                            if key not in core_fields:
+                                cfg.pop(key)
+                    self._init_memory_client(powermem_config)
+                else:
+                    raise
 
-            self.use_powermem = True
-
-            logger.bind(tag=TAG).info(
-                f"PowerMem initialized successfully: mode={memory_mode}, "
-                f"database={powermem_config['vector_store']['provider']}, llm={powermem_config['llm']['provider']}, embedding={powermem_config['embedder']['provider']}"
-            )            
-            
         except ImportError as e:
             logger.bind(tag=TAG).error(
                 f"PowerMem not installed. Please install with: pip install powermem. Error: {e}"
@@ -150,6 +167,26 @@ class MemoryProvider(MemoryProviderBase):
             logger.bind(tag=TAG).error(f"Failed to initialize PowerMem: {str(e)}")
             logger.bind(tag=TAG).debug(f"Detailed error: {traceback.format_exc()}")
             self.use_powermem = False
+
+    def _init_memory_client(self, powermem_config):
+        """Initialize the powermem memory client."""
+        if self.enable_user_profile:
+            from powermem import UserMemory
+            self.memory_client = UserMemory(config=powermem_config)
+            memory_mode = "UserMemory (用户画像模式)"
+        else:
+            from powermem import AsyncMemory
+            self.memory_client = AsyncMemory(config=powermem_config)
+            memory_mode = "AsyncMemory (普通记忆模式)"
+
+        self.use_powermem = True
+
+        logger.bind(tag=TAG).info(
+            f"PowerMem initialized successfully: mode={memory_mode}, "
+            f"database={powermem_config['vector_store']['provider']}, "
+            f"llm={powermem_config['llm']['provider']}, "
+            f"embedding={powermem_config['embedder']['provider']}"
+        )
 
     async def save_memory(self, msgs, session_id=None):
         """

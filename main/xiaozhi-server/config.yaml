@@ -160,9 +160,10 @@ plugins:
       - ".wav"
       - ".p3"
     # yt-dlp online music search (requires: pip install yt-dlp)
-    # When enabled, searches YouTube for songs not found locally
+    # When enabled, searches online for songs not found locally
     yt_dlp_enabled: false
-    yt_dlp_max_duration: 600  # Max video duration in seconds (skip longer videos)
+    yt_dlp_source: soundcloud  # Search source: "soundcloud" (default, no auth) or "youtube" (requires cookies)
+    yt_dlp_max_duration: 600  # Max track duration in seconds (skip longer tracks)
     refresh_time: 300 # 刷新音乐列表的时间间隔，单位为秒
   search_from_ragflow:
     # 知识库的描述信息，方便大语言模型知道什么时候调用
@@ -484,6 +485,21 @@ ASR:
     api_key: 你的OpenAI API密钥
     base_url: https://api.openai.com/v1/audio/transcriptions
     model_name: gpt-4o-mini-transcribe
+    # Optional: language hint for better accuracy (e.g. "en", "hi", leave empty for auto-detect)
+    # language: en
+    output_dir: tmp/
+  DeepgramStreamASR:
+    # Deepgram streaming ASR — ultra-low latency real-time speech recognition
+    # Supports multilingual detection (Hindi+English code-switching)
+    # Get API key: https://console.deepgram.com/
+    type: deepgram_stream
+    api_key: your_deepgram_api_key
+    # Model: nova-3 (latest, best accuracy), nova-2 (fast, stable)
+    model: nova-3
+    # Language: "multi" for auto multilingual detection, "en" for English, "hi" for Hindi
+    language: multi
+    # Endpointing: silence duration (ms) to detect end of speech (lower = faster response)
+    endpointing: 300
     output_dir: tmp/
   GroqASR:
     # Groq语音识别服务，需要先在Groq Console创建API密钥

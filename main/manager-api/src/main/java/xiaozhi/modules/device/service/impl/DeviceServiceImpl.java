@@ -54,11 +54,13 @@ import xiaozhi.common.utils.ConvertUtils;
 import xiaozhi.common.utils.DateUtils;
 import xiaozhi.common.utils.ToolUtil;
 import xiaozhi.modules.device.dao.DeviceDao;
+import xiaozhi.modules.device.dao.DeviceHardwareDao;
 import xiaozhi.modules.device.dto.DeviceManualAddDTO;
 import xiaozhi.modules.device.dto.DevicePageUserDTO;
 import xiaozhi.modules.device.dto.DeviceReportReqDTO;
 import xiaozhi.modules.device.dto.DeviceReportRespDTO;
 import xiaozhi.modules.device.entity.DeviceEntity;
+import xiaozhi.modules.device.entity.DeviceHardwareEntity;
 import xiaozhi.modules.device.entity.OtaEntity;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.device.service.OtaService;
@@ -73,6 +75,7 @@ import xiaozhi.modules.sys.service.SysUserUtilService;
 public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> implements DeviceService {
 
     private final DeviceDao deviceDao;
+    private final DeviceHardwareDao deviceHardwareDao;
     private final SysUserUtilService sysUserUtilService;
     private final SysParamsService sysParamsService;
     private final RedisUtils redisUtils;
@@ -412,6 +415,42 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
     public DeviceReportRespDTO.Activation buildActivation(String deviceId, DeviceReportReqDTO deviceReport) {
         DeviceReportRespDTO.Activation code = new DeviceReportRespDTO.Activation();
 
+        // Check if this MAC is pre-registered in the hardware table
+        QueryWrapper<DeviceHardwareEntity> hwWrapper = new QueryWrapper<>();
+        hwWrapper.eq("mac_address", deviceId);
+        DeviceHardwareEntity hwDevice = deviceHardwareDao.selectOne(hwWrapper);
+        if (hwDevice != null) {
+            // Use the pre-assigned hardware code instead of a random one
+            code.setCode(hwDevice.getHardwareCode());
+            String frontedUrl = sysParamsService.getValue(Constant.SERVER_FRONTED_URL, true);
+            code.setMessage(frontedUrl + "\n" + hwDevice.getHardwareCode());
+            code.setChallenge(deviceId);
+
+            // Store in Redis so deviceActivation() can find it
+            String cachedCode = geCodeByDeviceId(deviceId);
+            if (!hwDevice.getHardwareCode().equals(cachedCode)) {
+                Map<String, Object> dataMap = new HashMap<>();
+                dataMap.put("id", deviceId);
+                dataMap.put("mac_address", deviceId);
+                dataMap.put("board", (deviceReport.getBoard() != null && deviceReport.getBoard().getType() != null)
+                        ? deviceReport.getBoard().getType()
+                        : (deviceReport.getChipModelName() != null ? deviceReport.getChipModelName() : "unknown"));
+                dataMap.put("app_version", (deviceReport.getApplication() != null)
+                        ? deviceReport.getApplication().getVersion()
+                        : null);
+                dataMap.put("deviceId", deviceId);
+                dataMap.put("activation_code", hwDevice.getHardwareCode());
+
+                String dataKey = getDeviceCacheKey(deviceId);
+                redisUtils.set(dataKey, dataMap);
+
+                String codeKey = RedisKeys.getOtaActivationCode(hwDevice.getHardwareCode());
+                redisUtils.set(codeKey, deviceId);
+            }
+            return code;
+        }
+
+        // Fallback: random 6-digit code for development / unregistered devices
         String cachedCode = geCodeByDeviceId(deviceId);
 
         if (StringUtils.isNotBlank(cachedCode)) {
@@ -826,5 +865,120 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
             }
         }
         return null;
+    }
+
+    @Override
+    public void registerHardware(String hardwareCode, String macAddress) {
+        // Check for duplicate hardware code
+        QueryWrapper<DeviceHardwareEntity> codeWrapper = new QueryWrapper<>();
+        codeWrapper.eq("hardware_code", hardwareCode);
+        if (deviceHardwareDao.selectOne(codeWrapper) != null) {
+            throw new RenException(ErrorCode.HARDWARE_CODE_DUPLICATE);
+        }
+
+        // Check for duplicate MAC address
+        QueryWrapper<DeviceHardwareEntity> macWrapper = new QueryWrapper<>();
+        macWrapper.eq("mac_address", macAddress);
+        if (deviceHardwareDao.selectOne(macWrapper) != null) {
+            throw new RenException(ErrorCode.HARDWARE_MAC_DUPLICATE);
+        }
+
+        DeviceHardwareEntity entity = new DeviceHardwareEntity();
+        entity.setHardwareCode(hardwareCode);
+        entity.setMacAddress(macAddress);
+        entity.setIsBound(0);
+        entity.setCreateDate(new Date());
+        entity.setUpdateDate(new Date());
+        deviceHardwareDao.insert(entity);
+    }
+
+    @Override
+    public DeviceEntity bindByHardwareCode(String hardwareCode, String firebaseUid, String agentId) {
+        // Look up hardware record
+        QueryWrapper<DeviceHardwareEntity> hwWrapper = new QueryWrapper<>();
+        hwWrapper.eq("hardware_code", hardwareCode);
+        DeviceHardwareEntity hwDevice = deviceHardwareDao.selectOne(hwWrapper);
+        if (hwDevice == null) {
+            throw new RenException(ErrorCode.HARDWARE_CODE_NOT_FOUND);
+        }
+        if (hwDevice.getIsBound() != null && hwDevice.getIsBound() == 1) {
+            throw new RenException(ErrorCode.HARDWARE_ALREADY_BOUND);
+        }
+
+        // Get the current user
+        UserDetail user = SecurityUser.getUser();
+        if (user.getId() == null) {
+            throw new RenException(ErrorCode.USER_NOT_LOGIN);
+        }
+
+        // Use provided agentId, or fall back to user's first agent
+        if (StringUtils.isBlank(agentId)) {
+            throw new RenException(ErrorCode.AGENT_NOT_FOUND);
+        }
+
+        // Check if device already exists in ai_device table
+        String macAddress = hwDevice.getMacAddress();
+        DeviceEntity existingDevice = getDeviceByMacAddress(macAddress);
+        if (existingDevice != null) {
+            throw new RenException(ErrorCode.DEVICE_ALREADY_ACTIVATED);
+        }
+
+        // Create the device record
+        Date now = new Date();
+        DeviceEntity device = new DeviceEntity();
+        device.setId(macAddress);
+        device.setMacAddress(macAddress);
+        device.setAgentId(agentId);
+        device.setUserId(user.getId());
+        device.setCreator(user.getId());
+        device.setUpdater(user.getId());
+        device.setAutoUpdate(1);
+        device.setCreateDate(now);
+        device.setUpdateDate(now);
+        device.setLastConnectedAt(now);
+        deviceDao.insert(device);
+
+        // Update hardware record: mark as bound, store firebase UID
+        hwDevice.setIsBound(1);
+        hwDevice.setBoundAt(now);
+        hwDevice.setFirebaseUid(firebaseUid);
+        hwDevice.setUpdateDate(now);
+        deviceHardwareDao.updateById(hwDevice);
+
+        // Clear relevant caches
+        redisUtils.delete(RedisKeys.getAgentDeviceCountById(agentId));
+        String dataKey = getDeviceCacheKey(macAddress);
+        String cachedCode = geCodeByDeviceId(macAddress);
+        if (cachedCode != null) {
+            redisUtils.delete(List.of(dataKey, RedisKeys.getOtaActivationCode(cachedCode)));
+        }
+
+        return device;
+    }
+
+    @Override
+    public void changeDeviceAgent(Long userId, String deviceId, String newAgentId) {
+        DeviceEntity device = baseDao.selectById(deviceId);
+        if (device == null) {
+            throw new RenException(ErrorCode.DEVICE_NOT_EXIST);
+        }
+        if (!device.getUserId().equals(userId)) {
+            throw new RenException(ErrorCode.DEVICE_NOT_EXIST);
+        }
+
+        String oldAgentId = device.getAgentId();
+
+        // Update the agent
+        UpdateWrapper<DeviceEntity> wrapper = new UpdateWrapper<>();
+        wrapper.eq("id", deviceId);
+        wrapper.set("agent_id", newAgentId);
+        wrapper.set("update_date", new Date());
+        baseDao.update(null, wrapper);
+
+        // Clear device count caches for both old and new agents
+        if (StringUtils.isNotBlank(oldAgentId)) {
+            redisUtils.delete(RedisKeys.getAgentDeviceCountById(oldAgentId));
+        }
+        redisUtils.delete(RedisKeys.getAgentDeviceCountById(newAgentId));
     }
 }

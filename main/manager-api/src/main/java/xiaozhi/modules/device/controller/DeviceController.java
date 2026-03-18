@@ -22,11 +22,14 @@ import xiaozhi.common.redis.RedisKeys;
 import xiaozhi.common.redis.RedisUtils;
 import xiaozhi.common.user.UserDetail;
 import xiaozhi.common.utils.Result;
+import xiaozhi.modules.device.dto.DeviceChangeAgentDTO;
 import xiaozhi.modules.device.dto.DeviceManualAddDTO;
 import xiaozhi.modules.device.dto.DeviceRegisterDTO;
 import xiaozhi.modules.device.dto.DeviceToolsCallReqDTO;
 import xiaozhi.modules.device.dto.DeviceUnBindDTO;
 import xiaozhi.modules.device.dto.DeviceUpdateDTO;
+import xiaozhi.modules.device.dto.HardwareBindDTO;
+import xiaozhi.modules.device.dto.HardwareRegisterDTO;
 import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.security.user.SecurityUser;
@@ -158,5 +161,31 @@ public class DeviceController {
         Result<Object> response = new Result<Object>();
         response.setMsg("Tools called successfully");
         return response.ok(result);
+    }
+
+    @PostMapping("/hardware/register")
+    @Operation(summary = "Pre-register hardware device (manufacturing)")
+    @RequiresPermissions("sys:role:normal")
+    public Result<Void> registerHardware(@RequestBody @Valid HardwareRegisterDTO dto) {
+        deviceService.registerHardware(dto.getHardwareCode(), dto.getMacAddress());
+        return new Result<>();
+    }
+
+    @PostMapping("/hardware/bind")
+    @Operation(summary = "Bind device by hardware code (mobile app)")
+    @RequiresPermissions("sys:role:normal")
+    public Result<DeviceEntity> bindByHardwareCode(@RequestBody @Valid HardwareBindDTO dto) {
+        DeviceEntity device = deviceService.bindByHardwareCode(
+                dto.getHardwareCode(), dto.getFirebaseUid(), dto.getAgentId());
+        return new Result<DeviceEntity>().ok(device);
+    }
+
+    @PutMapping("/change-agent")
+    @Operation(summary = "Change device agent")
+    @RequiresPermissions("sys:role:normal")
+    public Result<Void> changeDeviceAgent(@RequestBody @Valid DeviceChangeAgentDTO dto) {
+        UserDetail user = SecurityUser.getUser();
+        deviceService.changeDeviceAgent(user.getId(), dto.getDeviceId(), dto.getNewAgentId());
+        return new Result<>();
     }
 }

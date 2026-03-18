@@ -133,4 +133,31 @@ public interface DeviceService extends BaseService<DeviceEntity> {
      */
     Object callDeviceTool(String deviceId, String toolName, Map<String, Object> arguments);
 
+    /**
+     * Pre-register a hardware device (manufacturing flow)
+     *
+     * @param hardwareCode code to print on device
+     * @param macAddress   device MAC address
+     */
+    void registerHardware(String hardwareCode, String macAddress);
+
+    /**
+     * Bind a device using its pre-assigned hardware code (mobile app flow)
+     *
+     * @param hardwareCode code printed on the device
+     * @param firebaseUid  Firebase user UID
+     * @param agentId      agent to bind to (null = default agent)
+     * @return the bound DeviceEntity
+     */
+    DeviceEntity bindByHardwareCode(String hardwareCode, String firebaseUid, String agentId);
+
+    /**
+     * Change the agent assigned to a device
+     *
+     * @param userId     current user ID
+     * @param deviceId   device ID
+     * @param newAgentId new agent ID
+     */
+    void changeDeviceAgent(Long userId, String deviceId, String newAgentId);
+
 }

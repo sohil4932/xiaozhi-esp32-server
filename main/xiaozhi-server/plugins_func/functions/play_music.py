@@ -46,7 +46,7 @@ play_music_function_desc = {
 
 
 @register_function("play_music", play_music_function_desc, ToolType.SYSTEM_CTL)
-def play_music(conn: "ConnectionHandler", song_name: str):
+async def play_music(conn: "ConnectionHandler", song_name: str):
     try:
         music_intent = f"Play music {song_name}" if song_name != "random" else "Play random music"
 
@@ -56,19 +56,13 @@ def play_music(conn: "ConnectionHandler", song_name: str):
                 action=Action.RESPONSE, result="System busy", response="Please try again later"
             )
 
-        task = conn.loop.create_task(handle_music_command(conn, music_intent))
-
-        def handle_done(f):
-            try:
-                f.result()
-                conn.logger.bind(tag=TAG).info("Playback complete")
-            except Exception as e:
-                conn.logger.bind(tag=TAG).error(f"Playback failed: {e}")
-
-        task.add_done_callback(handle_done)
+        # Await music command directly so TTS queue gets the file
+        # BEFORE the caller sends SentenceType.LAST
+        await handle_music_command(conn, music_intent)
+        conn.logger.bind(tag=TAG).info("Playback complete")
 
         return ActionResponse(
-            action=Action.NONE, result="Command received", response="Playing music for you"
+            action=Action.NONE, result="Command received", response=""
         )
     except Exception as e:
         conn.logger.bind(tag=TAG).error(f"Music error: {e}")
@@ -234,10 +228,17 @@ async def _yt_dlp_download(conn, song_name):
     # Get max duration from config (default 10 minutes)
     max_duration = MUSIC_CACHE.get("music_config", {}).get("yt_dlp_max_duration", 600)
 
-    # Build yt-dlp command: search YouTube, download best audio, convert to mp3
+    # Build yt-dlp command: search SoundCloud (no auth needed), download audio, convert to mp3
+    # SoundCloud doesn't require cookies/auth unlike YouTube
+    search_source = MUSIC_CACHE.get("music_config", {}).get("yt_dlp_source", "soundcloud")
+    if search_source == "youtube":
+        search_prefix = "ytsearch1"
+    else:
+        search_prefix = "scsearch1"  # SoundCloud search (default, no auth needed)
+
     cmd = [
         "yt-dlp",
-        f"ytsearch1:{song_name}",          # Search YouTube, take first result
+        f"{search_prefix}:{song_name}",    # Search and take first result
         "--extract-audio",                   # Extract audio only
         "--audio-format", "mp3",             # Convert to mp3
         "--audio-quality", "5",              # Medium quality (0=best, 10=worst)
