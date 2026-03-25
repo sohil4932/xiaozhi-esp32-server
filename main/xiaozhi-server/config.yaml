@@ -1316,3 +1316,81 @@ Realtime:
     # Note: Auto-config uses EVI 4-mini by default. Tools and system prompts
     # are automatically configured. You can also create custom configs via
     # Hume web console and specify config_id above.
+
+  ElevenLabsConversational:
+    # ElevenLabs Conversational AI — ultra-low latency voice conversations via Agents Platform
+    # Platform:  https://elevenlabs.io/app/conversational-ai
+    # API Keys:  https://elevenlabs.io/app/settings/api-keys
+    # Docs:      https://elevenlabs.io/docs/conversational-ai/overview
+    #
+    # This provider combines ASR + LLM + TTS in a single WebSocket connection.
+    # Expected latency: <1 s end-to-end.
+    #
+    # Features:
+    # - Ultra-low latency voice conversations
+    # - Natural, expressive voices with emotional intelligence
+    # - Client tools for device control (MCP / plugins)
+    # - mem0 persistent memory (see mem0_tools_enabled below)
+    # - User interruption support
+    type: elevenlabs_conversational
+
+    # Required parameters
+    api_key: YOUR-ELEVENLABS-API-KEY-HERE   # ⚠️ REPLACE WITH YOUR ACTUAL API KEY!
+    agent_id: YOUR-ELEVENLABS-AGENT-ID-HERE # ⚠️ REPLACE WITH YOUR AGENT ID!
+
+    # Optional: use a signed URL for private agents (default: false)
+    use_signed_url: false
+
+    # ── mem0 persistent memory ─────────────────────────────────────────────────
+    # Enables the agent to remember user preferences / facts across conversations.
+    #
+    # How it works:
+    #   1. Set mem0_tools_enabled: true here.
+    #   2. Configure a Memory provider in selected_module (e.g. mem0ai) so that
+    #      conn.memory is available at runtime.
+    #   3. Register two Client Tools in the ElevenLabs agent dashboard
+    #      (https://elevenlabs.io/app/conversational-ai → your agent → Tools):
+    #
+    #      Tool name : addMemories
+    #      Parameters: { "message": { "type": "string",
+    #                                 "description": "Information to remember" } }
+    #
+    #      Tool name : retrieveMemories
+    #      Parameters: { "message": { "type": "string",
+    #                                 "description": "Query to search memories" } }
+    #
+    #   4. Add instructions to your agent's system prompt, e.g.:
+    #      "Before responding, call retrieveMemories with the user's query.
+    #       After each turn, call addMemories to store important facts."
+    #
+    # The tools are routed to the Memory provider configured in selected_module,
+    # so mem0ai, mem_local_short, or any other provider all work here.
+    mem0_tools_enabled: false
+
+    # ── First message override ──────────────────────────────────────────────────
+    # Overrides the agent's default first message at the start of each session.
+    # IMPORTANT: You must enable the "first_message" override in the ElevenLabs
+    # agent dashboard → Security tab, otherwise the server will reject it.
+    #
+    # Provide a single string OR a list — if a list, one is chosen at random
+    # each session so the greeting feels fresh and natural.
+    #
+    # You can reference {{user_name}} and any other dynamic_variables keys here.
+    #
+    # Semicolon-separated list of greetings — one is chosen at random each session.
+    # A single entry means the same greeting is used every time.
+    # Supports {{user_name}} and any other dynamic_variables keys as placeholders.
+    first_message: "Hey! Great to hear from you. What can I help with?;Hello! I'm here and ready — what's up?;Hi there! What would you like to talk about today?;Hey, good to have you back! What's on your mind?"
+
+    # ── Dynamic variables ───────────────────────────────────────────────────────
+    # Key/value pairs injected into every session.
+    # Use {{key}} syntax in the agent's system prompt or first_message on the
+    # ElevenLabs dashboard to reference them.
+    #
+    # Example — if you set user_name here it acts as a fallback when voiceprint
+    # has not yet identified the speaker:
+    # dynamic_variables:
+    #   user_name: "Friend"
+    #   assistant_name: "Xiaozhi"
+    dynamic_variables:
+      user_name: "Friend"

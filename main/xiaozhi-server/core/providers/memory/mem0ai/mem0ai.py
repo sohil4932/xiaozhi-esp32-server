@@ -1,3 +1,4 @@
+import asyncio
 import json
 import traceback
 
@@ -57,7 +58,10 @@ class MemoryProvider(MemoryProviderBase):
 
                 messages.append({"role": message.role, "content": content})
 
-            result = self.client.add(messages, user_id=self.role_id)
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, lambda: self.client.add(messages, user_id=self.role_id)
+            )
             logger.bind(tag=TAG).debug(f"Save memory result: {result}")
         except Exception as e:
             logger.bind(tag=TAG).error(f"保存记忆失败: {str(e)}")
@@ -81,7 +85,10 @@ class MemoryProvider(MemoryProviderBase):
             except (json.JSONDecodeError, KeyError):
                 pass
 
-            results = self.client.search(search_query, filters=filters)
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None, lambda: self.client.search(search_query, filters=filters)
+            )
             if not results or "results" not in results:
                 return ""
 

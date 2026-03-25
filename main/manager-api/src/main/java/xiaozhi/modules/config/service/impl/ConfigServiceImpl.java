@@ -149,6 +149,13 @@ public class ConfigServiceImpl implements ConfigService {
         }
         // 构建返回数据
         Map<String, Object> result = new HashMap<>();
+
+        // 暴露设备别名供 Python 服务端使用（例如 ElevenLabs first_message 中的 {{user_name}}）
+        // 设备别名由用户在管理控制台设置，无需额外查询（DeviceEntity 已在上面加载）
+        if (StringUtils.isNotBlank(device.getAlias())) {
+            result.put("device_alias", device.getAlias());
+        }
+
         // 获取单台设备每天最多输出字数
         String deviceMaxOutputSize = sysParamsService.getValue("device_max_output_size", true);
         result.put("device_max_output_size", deviceMaxOutputSize);

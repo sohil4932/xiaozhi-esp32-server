@@ -81,6 +81,7 @@ class ConnectionHandler:
         self.websocket: websockets.ServerConnection | None = None
         self.headers = None
         self.device_id = None
+        self.device_alias = None  # Set from manager API; used as user_name fallback
         self.client_ip = None
         self.prompt = None
         self.welcome_msg = None
@@ -720,6 +721,10 @@ class ConnectionHandler:
             self.max_output_size = int(private_config["device_max_output_size"])
         if private_config.get("chat_history_conf", None) is not None:
             self.chat_history_conf = int(private_config["chat_history_conf"])
+        # Device alias set by the owner in the management console.
+        # Used as a fallback user_name when voiceprint has not identified the speaker.
+        if private_config.get("device_alias", None) is not None:
+            self.device_alias = private_config["device_alias"]
         if private_config.get("mcp_endpoint", None) is not None:
             self.config["mcp_endpoint"] = private_config["mcp_endpoint"]
         if private_config.get("context_providers", None) is not None:

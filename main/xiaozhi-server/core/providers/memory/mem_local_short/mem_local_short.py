@@ -145,19 +145,32 @@ short_term_memory_prompt = short_term_memory_prompt_english
 
 
 def extract_json_data(json_code):
+    """Extract the first valid JSON object from an LLM response.
+
+    Handles three common LLM output patterns:
+    1. Wrapped in ```json ... ``` code block
+    2. Bare JSON with no wrapper
+    3. JSON followed by extra explanatory text (raw_decode stops at first object)
+    """
+    # Try to extract from ```json ... ``` code block first
     start = json_code.find("```json")
-    # 从start开始找到下一个```结束
-    end = json_code.find("```", start + 1)
-    # print("start:", start, "end:", end)
-    if start == -1 or end == -1:
-        try:
-            jsonData = json.loads(json_code)
-            return json_code
-        except Exception as e:
-            print("Error:", e)
+    end = json_code.find("```", start + 1) if start != -1 else -1
+    if start != -1 and end != -1:
+        json_code = json_code[start + 7 : end]
+
+    # Find the first '{' to skip any leading whitespace / text
+    brace_start = json_code.find("{")
+    if brace_start == -1:
         return ""
-    jsonData = json_code[start + 7 : end]
-    return jsonData
+    json_code = json_code[brace_start:]
+
+    # raw_decode parses the first complete JSON object and ignores trailing content
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(json_code)
+        return json.dumps(obj, ensure_ascii=False)
+    except Exception as e:
+        print("Error extracting JSON:", e)
+        return ""
 
 
 TAG = __name__

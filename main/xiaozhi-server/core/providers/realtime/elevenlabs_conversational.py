@@ -24,13 +24,14 @@ Key Features:
 
 import io
 import json
+import random
 import wave
 import base64
 import asyncio
 import websockets
 import opuslib_next
 import numpy as np
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Union
 from config.logger import setup_logging
 from core.handle.reportHandle import enqueue_asr_report, enqueue_tts_report
 from core.utils.dialogue import Message
@@ -69,6 +70,28 @@ class ElevenLabsConversationalProvider:
             raise ValueError("ElevenLabs agent_id is required")
 
         self.use_signed_url = config.get("use_signed_url", False)
+
+        # First message override — sent in conversation_initiation_client_data each session.
+        # Stored as a semicolon-separated string in the Xiaozhi GUI config.
+        # Each entry is trimmed; empty entries are dropped.
+        # If multiple entries, one is chosen at random per session.
+        # Requires "first_message" override to be enabled in the ElevenLabs agent Security tab.
+        # Supports {{user_name}} and any other dynamic_variables keys as placeholders.
+        # Example: "Hey!;Hello there!;Hi, what's up?"
+        first_message_cfg = config.get("first_message", "") or ""
+        logger.bind(tag=TAG).debug(f"first_message config type={type(first_message_cfg).__name__} value={repr(first_message_cfg)[:120]}")
+        if isinstance(first_message_cfg, list):
+            # GUI returned a list directly
+            self._first_messages: List[str] = [m.strip() for m in first_message_cfg if str(m).strip()]
+        else:
+            # Split semicolon-separated string; strip BOM/whitespace from each part
+            self._first_messages = [
+                m.strip() for m in str(first_message_cfg).split(";") if m.strip()
+            ]
+
+        # Static dynamic variables injected into every session.
+        # Keys/values appear as {{key}} in the agent's system prompt and first_message.
+        self._dynamic_variables: Dict[str, Any] = config.get("dynamic_variables", {}) or {}
 
         # Audio configuration
         # Input: ESP32 sends 16kHz Opus → decode → send 16kHz PCM to ElevenLabs (NO resampling)
@@ -157,6 +180,14 @@ class ElevenLabsConversationalProvider:
         self.agent_audio_buffer = []  # List of Opus packets for agent speech (for chat history with audio)
         self.max_audio_buffer_duration = 3.5  # Maximum 3.5 seconds of audio to buffer (captures typical utterances with minimal leading silence)
 
+        # mem0 memory tools configuration
+        # When enabled, ElevenLabs agent can call 'addMemories' and 'retrieveMemories'
+        # client tools during conversation, which are routed to conn.memory provider.
+        # You must register these tools in the ElevenLabs agent dashboard:
+        #   - addMemories: { message: string } → stores memory
+        #   - retrieveMemories: { message: string } → retrieves relevant memories
+        self.mem0_tools_enabled = config.get("mem0_tools_enabled", False)
+
         # Check if voiceprint is available from connection
         if hasattr(conn, 'voiceprint_provider') and conn.voiceprint_provider:
             self.voiceprint_enabled = True
@@ -164,7 +195,8 @@ class ElevenLabsConversationalProvider:
 
         logger.bind(tag=TAG).info(
             f"ElevenLabs Conversational AI provider initialized | Agent ID: {self.agent_id} | "
-            f"Voiceprint: {'Enabled' if self.voiceprint_enabled else 'Disabled'}"
+            f"Voiceprint: {'Enabled' if self.voiceprint_enabled else 'Disabled'} | "
+            f"mem0 tools: {'Enabled' if self.mem0_tools_enabled else 'Disabled'}"
         )
 
     async def connect(self):
@@ -206,14 +238,7 @@ class ElevenLabsConversationalProvider:
 
             # Send conversation initiation message (required by ElevenLabs protocol)
             # Must be sent before any audio; ElevenLabs responds with conversation_initiation_metadata
-            initiation_msg = {
-                "type": "conversation_initiation_client_data",
-                "conversation_config_override": {
-                    "agent": {
-                        "language": "en"
-                    }
-                }
-            }
+            initiation_msg = await self._build_initiation_message()
             initiation_json = json.dumps(initiation_msg)
             logger.bind(tag=TAG).info(f"Sending conversation_initiation_client_data: {initiation_json}")
             await self.ws.send(initiation_json)
@@ -240,6 +265,78 @@ class ElevenLabsConversationalProvider:
             logger.bind(tag=TAG).error(f"Failed to connect to ElevenLabs: {e}")
             self.is_connected = False
             return False
+
+    async def _build_initiation_message(self) -> Dict[str, Any]:
+        """Build the conversation_initiation_client_data message sent at session start.
+
+        Merges:
+        - A randomly selected first_message (if configured)
+        - Static dynamic_variables from config
+        - Identified speaker name from voiceprint (injected as {{user_name}})
+        - Retrieved memories from mem0 injected into the prompt override
+
+        NOTE: To use first_message override, you must enable it in the ElevenLabs
+        agent dashboard → Security tab → allow 'first_message' override.
+        """
+        msg: Dict[str, Any] = {"type": "conversation_initiation_client_data"}
+
+        # --- dynamic_variables ---
+        # Start with static variables from config, then layer in runtime values.
+        dynamic_vars: Dict[str, Any] = dict(self._dynamic_variables)
+
+        # Always set memories default so {{memories}} variable is never missing.
+        # Will be overwritten below if mem0 returns actual data.
+        dynamic_vars.setdefault("memories", "No previous memories.")
+
+        # Resolve user_name with priority: voiceprint > device_alias > config default > "Friend"
+        if self.current_speaker:
+            dynamic_vars["user_name"] = self.current_speaker
+        elif getattr(self.conn, 'device_alias', None):
+            dynamic_vars["user_name"] = self.conn.device_alias
+        elif not dynamic_vars.get("user_name"):
+            dynamic_vars["user_name"] = self.config.get("default_user_name", "Friend")
+
+        msg["dynamic_variables"] = dynamic_vars
+
+        # --- conversation_config_override ---
+        agent_override: Dict[str, Any] = {}
+
+        # Language (always set)
+        agent_override["language"] = self.config.get("language", "en")
+
+        # First message: pick one at random from the configured list each session
+        if self._first_messages:
+            chosen = random.choice(self._first_messages)
+            agent_override["first_message"] = chosen
+            logger.bind(tag=TAG).info(f"Session first_message: '{chosen}'")
+
+        # --- Pre-fetch memories from mem0 and inject via dynamic_variables ---
+        # Memories are passed as {{memories}} dynamic variable — no prompt override needed,
+        # so no 1008 error. Just add {{memories}} placeholder anywhere in your ElevenLabs
+        # agent's system prompt where you want the memories to appear.
+        # Only personal facts are included (name, preferences, traits) — activity/event
+        # memories are excluded by using a focused query.
+        if self.mem0_tools_enabled:
+            memory = getattr(self.conn, 'memory', None)
+            if memory:
+                try:
+                    memories = await memory.query_memory(
+                        "user name preferences likes dislikes personality traits hobbies"
+                    )
+                    if memories:
+                        dynamic_vars["memories"] = memories
+                        logger.bind(tag=TAG).info(
+                            f"[MEM0] Pre-fetched memories injected via dynamic_variables | {len(memories)} chars"
+                        )
+                    else:
+                        dynamic_vars["memories"] = "No previous memories."
+                        logger.bind(tag=TAG).info("[MEM0] No memories found for this user — starting fresh")
+                except Exception as e:
+                    logger.bind(tag=TAG).error(f"[MEM0] Failed to pre-fetch memories: {e}")
+                    dynamic_vars["memories"] = ""
+
+        msg["conversation_config_override"] = {"agent": agent_override}
+        return msg
 
     async def _get_signed_url(self) -> str:
         """Get signed URL for private agents
@@ -493,6 +590,15 @@ class ElevenLabsConversationalProvider:
                 # Flush any partially-accumulated PCM from the output buffer
                 await self._send_audio_complete()
 
+                # Signal ESP32 that agent has finished speaking so it switches back
+                # to listen/microphone mode. Without this the device stays stuck in
+                # TTS playback mode and never sends mic audio → no further responses.
+                # Brief delay lets the last audio frames reach the ESP32 before stop.
+                await asyncio.sleep(0.1)
+                await self._send_tts_stop()
+                self.audio_session_started = False
+                self.audio_frames_sent = 0
+
                 # Report to management API chat history (with audio for voiceprint)
                 # Pass a copy of the buffer to avoid modification during processing
                 audio_snapshot = self.agent_audio_buffer.copy()
@@ -557,7 +663,26 @@ class ElevenLabsConversationalProvider:
             tool_name = tool_call_data.get("tool_name")
             parameters = tool_call_data.get("parameters", {})
 
-            logger.bind(tag=TAG).info(f"Client tool call: {tool_name} | ID: {tool_call_id}")
+            logger.bind(tag=TAG).info(f"[TOOL] client_tool_call received | tool={tool_name} | id={tool_call_id} | params={parameters}")
+
+            # Handle ElevenLabs native end_call system tool.
+            # Fired when the agent decides to end the conversation (e.g. user says goodbye).
+            # Enable in agent dashboard: Tools tab → end_call
+            if tool_name == "end_call":
+                logger.bind(tag=TAG).info("ElevenLabs end_call tool triggered — closing connection")
+                await self._send_client_tool_result(tool_call_id, "Goodbye!", tool_name)
+                await asyncio.sleep(0.3)
+                await self._send_tts_stop()
+                self.conn.close_after_chat = True
+                await self.conn.close()
+                return
+
+            # Handle mem0 memory tools (addMemories / retrieveMemories)
+            # These are registered as client tools in the ElevenLabs agent dashboard.
+            # They let the agent persist and recall memories across conversations via mem0.
+            if self.mem0_tools_enabled and tool_name in ("addMemories", "retrieveMemories"):
+                await self._handle_mem0_tool(tool_call_id, tool_name, parameters)
+                return
 
             # Execute function via UnifiedToolHandler
             if hasattr(self.conn, 'func_handler') and self.conn.func_handler:
@@ -579,6 +704,80 @@ class ElevenLabsConversationalProvider:
             logger.bind(tag=TAG).error(f"Error handling client tool call: {e}")
             await self._send_client_tool_error(tool_call_id, str(e))
 
+    async def _handle_mem0_tool(self, tool_call_id: str, tool_name: str, parameters: dict):
+        """Handle mem0 memory client tools: addMemories and retrieveMemories.
+
+        These tools must be registered in the ElevenLabs agent dashboard with the
+        following JSON specifications:
+
+        addMemories:
+          { "message": { "type": "string", "description": "Information to remember" } }
+
+        retrieveMemories:
+          { "message": { "type": "string", "description": "Query to search memories" } }
+
+        Routes to conn.memory (any MemoryProviderBase implementation: mem0ai,
+        mem_local_short, etc.).  If no memory provider is configured, returns an
+        informative error so the agent can continue gracefully.
+
+        Latency note:
+          retrieveMemories blocks the agent response — ElevenLabs waits for the tool
+          result before generating audio. Expect +200-500ms per turn when this fires.
+          addMemories is fire-and-forget (result is sent immediately, saving happens in
+          background) so it does NOT add latency to the response.
+
+        Both mem0 SDK calls (search/add) are synchronous HTTP under the hood, so we
+        offload them to a thread executor to avoid blocking the asyncio event loop.
+        """
+        memory = getattr(self.conn, 'memory', None)
+        message = parameters.get("message", "")
+
+        if not memory:
+            logger.bind(tag=TAG).warning(
+                f"mem0 tool '{tool_name}' called but no memory provider configured on connection"
+            )
+            await self._send_client_tool_result(tool_call_id, "Memory provider not configured.", tool_name)
+            return
+
+        try:
+            if tool_name == "addMemories":
+                # ACK immediately — ElevenLabs is NOT blocked waiting for the save.
+                await self._send_client_tool_result(tool_call_id, "Memory saved successfully.", tool_name)
+
+                # Build a two-message list so save_memory's len >= 2 guard passes.
+                Msg = type('Msg', (), {})
+                user_msg = Msg(); user_msg.role = "user"; user_msg.content = message
+                asst_msg = Msg(); asst_msg.role = "assistant"; asst_msg.content = "Got it, I'll remember that."
+
+                async def _save_in_background():
+                    try:
+                        await memory.save_memory([user_msg, asst_msg])
+                    except Exception as exc:
+                        logger.bind(tag=TAG).error(f"mem0 background save failed: {exc}")
+
+                asyncio.create_task(_save_in_background())
+                logger.bind(tag=TAG).info(f"mem0 addMemories: queued save for '{message[:80]}'")
+
+            elif tool_name == "retrieveMemories":
+                # ElevenLabs waits for this result before generating audio.
+                logger.bind(tag=TAG).info(
+                    f"[MEM0] retrieveMemories CALLED | tool_call_id={tool_call_id} | query='{message[:120]}'"
+                )
+                result = await memory.query_memory(message)
+                logger.bind(tag=TAG).info(
+                    f"[MEM0] retrieveMemories RESULT | chars={len(result) if result else 0} | content='{str(result)[:300]}'"
+                )
+                if not result:
+                    result = "No relevant memories found."
+                await self._send_client_tool_result(tool_call_id, result, tool_name)
+                logger.bind(tag=TAG).info(
+                    f"[MEM0] retrieveMemories SENT to ElevenLabs | tool_call_id={tool_call_id}"
+                )
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"mem0 tool '{tool_name}' failed: {e}", exc_info=True)
+            await self._send_client_tool_error(tool_call_id, str(e))
+
     async def _send_client_tool_result(self, tool_call_id: str, result, tool_name: str):
         """Send client tool result back to ElevenLabs"""
         try:
@@ -591,14 +790,13 @@ class ElevenLabsConversationalProvider:
             else:
                 output = str(result)
 
-            # Send tool result (per ElevenLabs protocol)
+            # ElevenLabs protocol: fields must be at top level (NOT nested)
+            # https://elevenlabs.io/docs/conversational-ai/client-tools
             message = {
                 "type": "client_tool_result",
-                "client_tool_result": {
-                    "tool_call_id": tool_call_id,
-                    "result": output,
-                    "is_error": False
-                }
+                "tool_call_id": tool_call_id,
+                "result": output,
+                "is_error": False,
             }
 
             await self._ws_send(json.dumps(message))
@@ -612,11 +810,9 @@ class ElevenLabsConversationalProvider:
         try:
             message = {
                 "type": "client_tool_result",
-                "client_tool_result": {
-                    "tool_call_id": tool_call_id,
-                    "result": f"Error: {error}",
-                    "is_error": True
-                }
+                "tool_call_id": tool_call_id,
+                "result": f"Error: {error}",
+                "is_error": True,
             }
 
             await self._ws_send(json.dumps(message))
