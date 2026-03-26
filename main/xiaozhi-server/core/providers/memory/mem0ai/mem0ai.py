@@ -58,7 +58,7 @@ class MemoryProvider(MemoryProviderBase):
 
                 messages.append({"role": message.role, "content": content})
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None, lambda: self.client.add(messages, user_id=self.role_id)
             )
@@ -85,7 +85,7 @@ class MemoryProvider(MemoryProviderBase):
             except (json.JSONDecodeError, KeyError):
                 pass
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             results = await loop.run_in_executor(
                 None, lambda: self.client.search(search_query, filters=filters)
             )

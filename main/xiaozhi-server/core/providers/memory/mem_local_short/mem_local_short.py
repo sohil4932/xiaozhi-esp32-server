@@ -169,7 +169,7 @@ def extract_json_data(json_code):
         obj, _ = json.JSONDecoder().raw_decode(json_code)
         return json.dumps(obj, ensure_ascii=False)
     except Exception as e:
-        print("Error extracting JSON:", e)
+        logger.warning(f"Error extracting JSON: {e}")
         return ""
 
 
@@ -266,12 +266,18 @@ class MemoryProvider(MemoryProviderBase):
         msgStr += f"\nCurrent Time: {time_str}"
 
         # Always generate memory summary using English prompt (regardless of save_to_file)
+        # response_no_stream is a blocking network call — run in executor to avoid
+        # stalling the event loop during audio streaming / WebSocket keepalives.
         try:
-            result = self.llm.response_no_stream(
-                short_term_memory_prompt,
-                msgStr,
-                max_tokens=2000,
-                temperature=0.2,
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.llm.response_no_stream(
+                    short_term_memory_prompt,
+                    msgStr,
+                    max_tokens=2000,
+                    temperature=0.2,
+                ),
             )
             json_str = extract_json_data(result)
             json.loads(json_str)  # 检查json格式是否正确

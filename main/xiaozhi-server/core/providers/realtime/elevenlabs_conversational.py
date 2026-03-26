@@ -333,7 +333,7 @@ class ElevenLabsConversationalProvider:
                         logger.bind(tag=TAG).info("[MEM0] No memories found for this user — starting fresh")
                 except Exception as e:
                     logger.bind(tag=TAG).error(f"[MEM0] Failed to pre-fetch memories: {e}")
-                    dynamic_vars["memories"] = ""
+                    dynamic_vars["memories"] = "No previous memories."
 
         msg["conversation_config_override"] = {"agent": agent_override}
         return msg
@@ -656,6 +656,7 @@ class ElevenLabsConversationalProvider:
             }
         }
         """
+        tool_call_id = None
         try:
             # Extract from nested client_tool_call object
             tool_call_data = event.get("client_tool_call", {})
@@ -702,7 +703,8 @@ class ElevenLabsConversationalProvider:
 
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error handling client tool call: {e}")
-            await self._send_client_tool_error(tool_call_id, str(e))
+            if tool_call_id:
+                await self._send_client_tool_error(tool_call_id, str(e))
 
     async def _handle_mem0_tool(self, tool_call_id: str, tool_name: str, parameters: dict):
         """Handle mem0 memory client tools: addMemories and retrieveMemories.
@@ -745,9 +747,8 @@ class ElevenLabsConversationalProvider:
                 await self._send_client_tool_result(tool_call_id, "Memory saved successfully.", tool_name)
 
                 # Build a two-message list so save_memory's len >= 2 guard passes.
-                Msg = type('Msg', (), {})
-                user_msg = Msg(); user_msg.role = "user"; user_msg.content = message
-                asst_msg = Msg(); asst_msg.role = "assistant"; asst_msg.content = "Got it, I'll remember that."
+                user_msg = Message(role="user", content=message)
+                asst_msg = Message(role="assistant", content="Got it, I'll remember that.")
 
                 async def _save_in_background():
                     try:
