@@ -280,6 +280,9 @@ async def send_tts_message(conn: "ConnectionHandler", state, text=None):
             await sendAudio(conn, audios)
         # 等待所有音频包发送完成
         await _wait_for_audio_completion(conn)
+        # 停止音频发送循环（仅在流控器已初始化时调用）
+        if hasattr(conn, "audio_rate_controller") and conn.audio_rate_controller:
+            conn.audio_rate_controller.stop_sending()
         # 清除服务端讲话状态
         conn.clearSpeakStatus()
 
@@ -316,3 +319,13 @@ async def send_stt_message(conn: "ConnectionHandler", text):
     await send_tts_message(conn, "start")
     # 发送start消息后客户端状态会处于说话中状态，同步服务端状态
     conn.client_is_speaking = True
+
+
+async def send_display_message(conn: "ConnectionHandler", text):
+    """发送纯显示消息"""
+    message = {
+        "type": "stt",
+        "text": text,
+        "session_id": conn.session_id
+    }
+    await conn.websocket.send(json.dumps(message))

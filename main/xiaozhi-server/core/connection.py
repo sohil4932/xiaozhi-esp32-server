@@ -24,7 +24,7 @@ from core.utils.modules_initialize import (
     initialize_tts,
     initialize_asr,
 )
-from core.handle.reportHandle import report
+from core.handle.reportHandle import report, enqueue_tool_report
 from core.providers.tts.default import DefaultTTS
 from concurrent.futures import ThreadPoolExecutor
 from core.utils.dialogue import Message, Dialogue
@@ -32,7 +32,7 @@ from core.providers.asr.dto.dto import InterfaceType
 from core.handle.textHandle import handleTextMessage
 from core.providers.tools.unified_tool_handler import UnifiedToolHandler
 from plugins_func.loadplugins import auto_import_modules
-from plugins_func.register import Action
+from plugins_func.register import Action, ActionResponse
 from core.auth import AuthenticationError
 from config.config_loader import get_private_config_from_api
 from core.providers.tts.dto.dto import ContentType, TTSMessageDTO, SentenceType
@@ -147,6 +147,8 @@ class ConnectionHandler:
         self.llm = _llm
         self.memory = _memory
         self.intent = _intent
+
+        self.is_exiting = False  # 标记是否正在执行退出流程
 
         # 为每个连接单独管理声纹识别
         self.voiceprint_provider = None
@@ -327,6 +329,10 @@ class ConnectionHandler:
 
     async def _route_message(self, message):
         """消息路由"""
+        # 退出状态丢弃所有消息
+        if self.is_exiting:
+           return
+
         # 检查是否已经获取到真实的绑定状态
         if not self.bind_completed_event.is_set():
             # 还没有获取到真实状态，等待直到获取到真实状态或超时
@@ -751,8 +757,8 @@ class ConnectionHandler:
         memory_type = self.config["Memory"][self.config["selected_module"]["Memory"]][
             "type"
         ]
-        # 如果使用 nomen，直接返回
-        if memory_type == "nomem":
+        # 如果使用 nomen 或 mem_report_only，直接返回
+        if memory_type == "nomem" or memory_type == "mem_report_only":
             return
         # 使用 mem_local_short 模式
         elif memory_type == "mem_local_short":
@@ -1063,6 +1069,10 @@ class ConnectionHandler:
                     )
 
             if not bHasError and len(tool_calls_list) > 0:
+                self.logger.bind(tag=TAG).debug(
+                    f"检测到 {len(tool_calls_list)} 个工具调用"
+                )
+
                 # 更新工具调用统计
                 if depth == 0:
                     current_turn = len(self.dialogue.dialogue) // 2
@@ -1079,10 +1089,6 @@ class ConnectionHandler:
                     self.dialogue.put(Message(role="assistant", content=text_buff))
                 response_message.clear()
 
-                self.logger.bind(tag=TAG).debug(
-                    f"检测到 {len(tool_calls_list)} 个工具调用"
-                )
-
                 # 收集所有工具调用的 Future
                 futures_with_data = []
                 for tool_call_data in tool_calls_list:
@@ -1090,21 +1096,43 @@ class ConnectionHandler:
                         f"function_name={tool_call_data['name']}, function_id={tool_call_data['id']}, function_arguments={tool_call_data['arguments']}"
                     )
 
+                    # 使用公共方法上报工具调用
+                    tool_input = json.loads(tool_call_data.get("arguments") or "{}")
+                    enqueue_tool_report(self, tool_call_data['name'], tool_input)
+
                     future = asyncio.run_coroutine_threadsafe(
                         self.func_handler.handle_llm_function_call(
                             self, tool_call_data
                         ),
                         self.loop,
                     )
-                    futures_with_data.append((future, tool_call_data))
+                    futures_with_data.append((future, tool_call_data, tool_input))
 
+                # 工具调用超时时间，可配置，默认30秒
+                tool_call_timeout = int(self.config.get("tool_call_timeout", 30))
                 # 等待协程结束（实际等待时长为最慢的那个）
                 tool_results = []
-                for future, tool_call_data in futures_with_data:
-                    result = future.result()
-                    tool_results.append((result, tool_call_data))
 
-                # 统一处理所有工具调用结果
+                for future, tool_call_data, tool_input in futures_with_data:
+                    try:
+                        result = future.result(timeout=tool_call_timeout)
+                        tool_results.append((result, tool_call_data))
+                        # 使用公共方法上报工具调用结果
+                        enqueue_tool_report(self, tool_call_data['name'], tool_input, str(result.result) if result.result else None, report_tool_call=False)
+
+                    except Exception as e:
+                        self.logger.bind(tag=TAG).error(
+                            f"工具调用超时或异常: {tool_call_data['name']}, 错误: {e}"
+                        )
+                        # 超时时返回错误响应，避免整个流程卡死
+                        tool_results.append((
+                            ActionResponse(action=Action.ERROR, result="哎呀，网络遇到点问题，请稍后再试下！"),
+                            tool_call_data
+                        ))
+                        # 上报工具调用错误
+                        enqueue_tool_report(self, tool_call_data['name'], tool_input, str(e), report_tool_call=False)
+
+                # 统一处理工具调用结果
                 if tool_results:
                     self._handle_function_result(tool_results, depth=depth)
 
