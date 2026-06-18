@@ -31,7 +31,11 @@
               </el-table-column>
               <el-table-column :label="$t('device.firmwareVersion')" prop="firmwareVersion"
                 align="center"></el-table-column>
-              <el-table-column :label="$t('device.macAddress')" prop="macAddress" align="center"></el-table-column>
+              <el-table-column :label="$t('device.macAddress')" prop="macAddress" align="center">
+                <template slot-scope="scope">
+                  <MacAddressMask :macAddress="scope.row.macAddress" />
+                </template>
+              </el-table-column>
               <el-table-column :label="$t('device.bindTime')" prop="bindTime" align="center"></el-table-column>
               <el-table-column :label="$t('device.lastConversation')" prop="lastConversation"
                 align="center"></el-table-column>
@@ -131,13 +135,15 @@ import AddDeviceDialog from "@/components/AddDeviceDialog.vue";
 import HeaderBar from "@/components/HeaderBar.vue";
 import ManualAddDeviceDialog from "@/components/ManualAddDeviceDialog.vue";
 import VersionFooter from "@/components/VersionFooter.vue";
+import MacAddressMask from "@/components/MacAddressMask.vue";
 
 export default {
   components: {
     HeaderBar,
     AddDeviceDialog,
     ManualAddDeviceDialog,
-    VersionFooter
+    VersionFooter,
+    MacAddressMask,
   },
   data() {
     return {
@@ -373,7 +379,9 @@ export default {
               firmwareVersion: device.appVersion,
               macAddress: device.macAddress,
               bindTime: device.createDate,
-              lastConversation: device.lastConnectedAt,
+              lastConversation: device.lastConnectedAtTimestamp
+                ? this.formatRelativeTime(device.lastConnectedAtTimestamp)
+                : '-',
               remark: device.alias,
               _originalRemark: device.alias,
               isEdit: false,
@@ -488,6 +496,14 @@ export default {
     isGenerate(row) {
       const version = row.firmwareVersion.replace(/\./g, '');
       return Number(version) >= 200;
+    },
+    formatRelativeTime(timestamp) {
+      if (!timestamp) return '-';
+      const ts = Number(timestamp);
+      if (isNaN(ts)) return '-';
+      const date = new Date(ts);
+      if (isNaN(date.getTime())) return '-';
+      return date.toLocaleString();  // 自动适配本地时区
     },
   }
 };
@@ -834,7 +850,7 @@ export default {
 }
 
 :deep(.el-checkbox__inner) {
-  background-color: #eeeeee !important;
+  background-color: #ffffff !important;
   border-color: #cccccc !important;
 }
 

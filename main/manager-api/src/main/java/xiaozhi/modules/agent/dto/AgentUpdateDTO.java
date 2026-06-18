@@ -33,6 +33,9 @@ public class AgentUpdateDTO implements Serializable {
     @Schema(description = "大语言模型标识", example = "llm_model_02", nullable = true)
     private String llmModelId;
 
+    @Schema(description = "小模型标识", example = "slm_model_02", nullable = true)
+    private String slmModelId;
+
     @Schema(description = "VLLM模型标识", example = "vllm_model_02", required = false)
     private String vllmModelId;
 
@@ -84,6 +87,9 @@ public class AgentUpdateDTO implements Serializable {
 
     @Schema(description = "上下文源配置", nullable = true)
     private List<ContextProviderDTO> contextProviders;
+
+    @Schema(description = "替换词文件ID列表", nullable = true)
+    private List<String> correctWordFileIds;
 
     @Data
     @Schema(description = "插件函数信息")

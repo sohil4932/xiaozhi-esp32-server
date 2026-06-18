@@ -48,6 +48,7 @@ import xiaozhi.modules.agent.service.AgentService;
 import xiaozhi.modules.agent.service.AgentTagService;
 import xiaozhi.modules.agent.service.AgentTemplateService;
 import xiaozhi.modules.agent.vo.AgentInfoVO;
+import xiaozhi.modules.correctword.service.CorrectWordFileService;
 import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.model.dto.ModelProviderDTO;
@@ -74,6 +75,7 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
     private final ModelProviderService modelProviderService;
     private final AgentContextProviderService agentContextProviderService;
     private final AgentTagService agentTagService;
+    private final CorrectWordFileService correctWordFileService;
 
     @Override
     public PageData<AgentEntity> adminAgentList(Map<String, Object> params) {
@@ -103,6 +105,10 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
         if (contextProviderEntity != null) {
             agent.setContextProviders(contextProviderEntity.getContextProviders());
         }
+
+        // 查询替换词文件ID列表
+        List<String> correctWordFileIds = correctWordFileService.getAgentCorrectWordFileIds(id);
+        agent.setCorrectWordFileIds(correctWordFileIds);
 
         // 无需额外查询插件列表，已通过SQL查询出来
         return agent;
@@ -140,40 +146,32 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
         QueryWrapper<AgentEntity> queryWrapper = new QueryWrapper<>();
         queryWrapper.eq("user_id", userId).orderByDesc("created_at");
 
-        // 如果有搜索关键词，根据搜索类型添加相应的查询条件
         if (StringUtils.isNotBlank(keyword)) {
-            if ("mac".equals(searchType)) {
-                // 按MAC地址搜索：先搜索设备，再获取对应的智能体
+            queryWrapper.and(w -> {
+                // 按名称搜索
+                w.like("agent_name", keyword);
+
+                // 按MAC地址搜索：先查设备，再获取对应的智能体ID
                 List<DeviceEntity> devices = Optional
-                        .ofNullable(deviceService.searchDevicesByMacAddress(keyword, userId)).orElseGet(ArrayList::new);
-                // 获取设备对应的智能体ID列表
+                        .ofNullable(deviceService.searchDevicesByMacAddress(keyword, userId))
+                        .orElseGet(ArrayList::new);
                 List<String> agentIds = devices.stream()
                         .map(DeviceEntity::getAgentId)
                         .distinct()
                         .collect(Collectors.toList());
                 if (ToolUtil.isNotEmpty(agentIds)) {
-                    queryWrapper.in("id", agentIds);
-                } else {
-                    return new ArrayList<>();
+                    w.or().in("id", agentIds);
                 }
-            } else {
-                // 按名称搜索（默认）：同时搜索智能体名称和标签名
+
+                // 按标签名搜索
                 List<String> tagAgentIds = agentTagService.getAgentIdsByTagName(keyword);
                 if (ToolUtil.isNotEmpty(tagAgentIds)) {
-                    queryWrapper.and(wrapper -> wrapper
-                            .like("agent_name", keyword)
-                            .or()
-                            .in("id", tagAgentIds));
-                } else {
-                    queryWrapper.like("agent_name", keyword);
+                    w.or().in("id", tagAgentIds);
                 }
-            }
+            });
         }
 
-        // 执行查询
         List<AgentEntity> agentEntities = baseDao.selectList(queryWrapper);
-
-        // 转换为DTO并设置所有必要字段
         return agentEntities.stream().map(this::buildAgentDTO).collect(Collectors.toList());
     }
 
@@ -300,6 +298,9 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
         if (dto.getLlmModelId() != null) {
             existingEntity.setLlmModelId(dto.getLlmModelId());
         }
+        if (dto.getSlmModelId() != null) {
+            existingEntity.setSlmModelId(dto.getSlmModelId());
+        }
         if (dto.getVllmModelId() != null) {
             existingEntity.setVllmModelId(dto.getVllmModelId());
         }
@@ -424,6 +425,11 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
             agentContextProviderService.saveOrUpdateByAgentId(contextEntity);
         }
 
+        // 更新替换词文件关联
+        if (dto.getCorrectWordFileIds() != null) {
+            correctWordFileService.saveAgentCorrectWords(agentId, dto.getCorrectWordFileIds());
+        }
+
         boolean b = validateLLMIntentParams(dto.getLlmModelId(), dto.getIntentModelId());
         if (!b) {
             throw new RenException(ErrorCode.LLM_INTENT_PARAMS_MISMATCH);
@@ -506,6 +512,13 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
             entity.setLanguage(template.getLanguage());
         }
 
+        if (entity.getSlmModelId() == null) {
+            String defaultSlmModelId = getDefaultLLMModelId();
+            if (defaultSlmModelId != null) {
+                entity.setSlmModelId(defaultSlmModelId);
+            }
+        }
+
         // 设置用户ID和创建者信息
         UserDetail user = SecurityUser.getUser();
         entity.setUserId(user.getId());
@@ -542,6 +555,25 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
         // 保存默认插件
         agentPluginMappingService.saveBatch(toInsert);
         return entity.getId();
+    }
+
+    private String getDefaultLLMModelId() {
+        try {
+            List<ModelConfigEntity> llmConfigs = modelConfigService.getEnabledModelsByType("LLM");
+            if (llmConfigs == null || llmConfigs.isEmpty()) {
+                return null;
+            }
+
+            for (ModelConfigEntity config : llmConfigs) {
+                if (config.getIsDefault() != null && config.getIsDefault() == 1) {
+                    return config.getId();
+                }
+            }
+
+            return llmConfigs.get(0).getId();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
 }

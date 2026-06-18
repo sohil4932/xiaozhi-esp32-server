@@ -22,7 +22,7 @@ play_music_function_desc = {
     "type": "function",
     "function": {
         "name": "play_music",
-        "description": "唱歌、听歌、播放音乐的方法。",
+        "description": "当用户要求播放音乐、歌曲时调用。",
         "parameters": {
             "type": "object",
             "properties": {
@@ -67,7 +67,7 @@ def play_music(conn: "ConnectionHandler", song_name: str):
         task.add_done_callback(handle_done)
 
         return ActionResponse(
-            action=Action.NONE, result="指令已接收", response="正在为您播放音乐"
+            action=Action.RECORD, result="指令已接收", response="正在为您播放音乐"
         )
     except Exception as e:
         conn.logger.bind(tag=TAG).error(f"处理音乐意图错误: {e}")
@@ -217,7 +217,8 @@ async def play_local_music(conn: "ConnectionHandler", specific_file=None):
             conn.logger.bind(tag=TAG).error(f"选定的音乐文件不存在: {music_path}")
             return
         text = _get_random_play_prompt(selected_music)
-        conn.dialogue.put(Message(role="assistant", content=text))
+        conn.tts.store_tts_text(conn.sentence_id, text)
+        # conn.dialogue.put(Message(role="assistant", content=text))
 
         if conn.intent_type == "intent_llm":
             conn.tts.tts_text_queue.put(

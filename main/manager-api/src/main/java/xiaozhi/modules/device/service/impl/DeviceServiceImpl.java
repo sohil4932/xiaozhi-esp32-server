@@ -6,6 +6,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -63,6 +64,7 @@ import xiaozhi.modules.device.dto.DeviceReportReqDTO;
 import xiaozhi.modules.device.dto.DeviceReportRespDTO;
 import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.entity.OtaEntity;
+import xiaozhi.modules.device.service.DeviceAddressBookService;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.device.service.OtaService;
 import xiaozhi.modules.device.vo.UserShowDeviceListVO;
@@ -80,6 +82,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
     private final SysParamsService sysParamsService;
     private final RedisUtils redisUtils;
     private final OtaService otaService;
+    private final DeviceAddressBookService deviceAddressBookService;
 
     @Async
     public void updateDeviceConnectionInfo(String agentId, String deviceId, String appVersion) {
@@ -299,12 +302,27 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
     }
 
     @Override
+    public List<UserShowDeviceListVO> getUserDeviceList(Long userId, String agentId) {
+        List<DeviceEntity> devices = getUserDevices(userId, agentId);
+        return devices.stream().map(device -> {
+            UserShowDeviceListVO vo = ConvertUtils.sourceToTarget(device, UserShowDeviceListVO.class);
+            vo.setDeviceType(device.getBoard());
+            // 设置UTC时间戳供前端使用时区转换
+            if (device.getLastConnectedAt() != null) {
+                vo.setLastConnectedAtTimestamp(device.getLastConnectedAt().getTime());
+            }
+            return vo;
+        }).toList();
+    }
+
+    @Override
     public void unbindDevice(Long userId, String deviceId) {
-        // 先查询设备信息，获取agentId
+        // 先查询设备信息，获取agentId和macAddress
         DeviceEntity device = baseDao.selectById(deviceId);
         if (device == null) {
             return;
         }
+        String macAddress = device.getMacAddress();
         if (StringUtils.isNotBlank(device.getAgentId())) {
             // 清除智能体设备数量缓存
             redisUtils.delete(RedisKeys.getAgentDeviceCountById(device.getAgentId()));
@@ -314,6 +332,9 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         wrapper.eq("user_id", userId);
         wrapper.eq("id", deviceId);
         baseDao.delete(wrapper);
+
+        // 删除设备相关的通讯录权限记录
+        deviceAddressBookService.deleteByMacAddresses(Collections.singletonList(macAddress));
     }
 
     @Override
@@ -332,9 +353,23 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
 
     @Override
     public void deleteByAgentId(String agentId) {
+        // 先查询该智能体下的所有设备，获取mac地址用于删除通讯录记录
+        QueryWrapper<DeviceEntity> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("agent_id", agentId);
+        List<DeviceEntity> devices = baseDao.selectList(queryWrapper);
+
+        // 删除设备
         UpdateWrapper<DeviceEntity> wrapper = new UpdateWrapper<>();
         wrapper.eq("agent_id", agentId);
         baseDao.delete(wrapper);
+
+        // 批量删除这些设备相关的所有通讯录权限记录
+        if (!devices.isEmpty()) {
+            List<String> macAddresses = devices.stream()
+                    .map(DeviceEntity::getMacAddress)
+                    .collect(Collectors.toList());
+            deviceAddressBookService.deleteByMacAddresses(macAddresses);
+        }
     }
 
     @Override
@@ -356,6 +391,11 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
             sysUserUtilService.assignUsername(device.getUserId(),
                     vo::setBindUserName);
             vo.setDeviceType(device.getBoard());
+            vo.setBoard(device.getBoard());
+            // 设置UTC时间戳供前端使用时区转换
+            if (device.getLastConnectedAt() != null) {
+                vo.setLastConnectedAtTimestamp(device.getLastConnectedAt().getTime());
+            }
             return vo;
         }).toList();
         // 计算页数

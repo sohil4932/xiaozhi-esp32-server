@@ -2,13 +2,21 @@
     <el-dialog
         :title="$t('chatHistory.with') + agentName + $t('chatHistory.dialogTitle') + (currentMacAddress ? '[' + currentMacAddress + ']' : '')"
         :visible.sync="dialogVisible" width="80%" :before-close="handleClose" custom-class="chat-history-dialog">
+        <template slot="title">
+            <span style="font-size: 18px;">
+                {{ $t('chatHistory.with') + agentName + $t('chatHistory.dialogTitle') }}
+                <template v-if="currentMacAddress">
+                    [<MacAddressMask :macAddress="currentMacAddress" />]
+                </template>
+            </span>
+        </template>
         <div class="chat-container">
             <div class="session-list" @scroll="handleScroll">
                 <div v-for="session in sessions" :key="session.sessionId" class="session-item"
                     :class="{ active: currentSessionId === session.sessionId }" @click="selectSession(session)">
                     <img :src="getUserAvatar(session.sessionId)" class="avatar" />
                     <div class="session-info">
-                        <div class="session-time">{{ formatTime(session.createdAt) }}</div>
+                        <div class="session-time">{{ session.title || formatTime(session.createdAt) }}</div>
                         <div class="message-count">{{ session.chatCount > 99 ? '99' : session.chatCount }}</div>
                     </div>
                 </div>
@@ -75,6 +83,7 @@
 <script>
 import { debounce } from '@/utils'
 import Api from '@/apis/api';
+import MacAddressMask from '@/components/MacAddressMask.vue';
 
 export default {
     name: 'ChatHistoryDialog',
@@ -110,6 +119,9 @@ export default {
             expandedToolResults: {} // 跟踪工具结果的展开状态
         };
     },
+    components: {
+        MacAddressMask,
+    },
     watch: {
         visible(val) {
             this.dialogVisible = val;
@@ -139,7 +151,7 @@ export default {
             if (this.messages[0]) {
                 result.push({
                     type: 'time',
-                    content: this.formatTime(this.messages[0].createdAt),
+                    content: this.formatTime(this.messages[this.messages.length - 1].createdAt),
                     id: `time-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
                 });
             }
@@ -267,6 +279,13 @@ export default {
                     if (this.messages.length > 0 && this.messages[0].macAddress) {
                         this.currentMacAddress = this.messages[0].macAddress;
                     }
+                    // 更新会话列表中的聊天记录数量
+                    this.sessions = this.sessions.map(item => {
+                        if (item.sessionId === session.sessionId) {
+                            item.chatCount = this.messages.length;
+                        }
+                        return item;
+                    })
                 }
             });
         },
@@ -426,7 +445,7 @@ export default {
 }
 
 .session-info {
-    flex: 1;
+    width: calc(100% - 50px);
 }
 
 .session-time {

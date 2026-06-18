@@ -17,7 +17,11 @@ AUDIO_FRAME_DURATION = 60
 PRE_BUFFER_COUNT = 5
 
 
-async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text):
+async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text, sentence_id=None):
+    # 跳过旧句子残留音频
+    if sentence_id is not None and sentence_id != conn.sentence_id:
+        return
+
     if conn.tts.tts_audio_first_sentence:
         conn.logger.bind(tag=TAG).info(f"发送第一段语音: {text}")
         conn.tts.tts_audio_first_sentence = False
@@ -43,9 +47,9 @@ async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text
         conn.logger.bind(tag=TAG).info(f"发送音频消息: {sentenceType}, {text}")
 
     # 发送结束消息（如果是最后一个文本）
-    if sentenceType == SentenceType.LAST:
+    # 通话需要维持speaking状态
+    if not conn.calling and sentenceType == SentenceType.LAST:
         await send_tts_message(conn, "stop", None)
-        conn.client_is_speaking = False
         if conn.close_after_chat:
             await conn.close()
 
@@ -270,6 +274,8 @@ async def send_tts_message(conn: "ConnectionHandler", state, text=None):
 
     # TTS播放结束
     if state == "stop":
+        # 保存当前的 sentence_id，用于后续判断是否是当前轮次
+        current_sentence_id = conn.sentence_id
         # 播放提示音
         tts_notify = conn.config.get("enable_stop_tts_notify", False)
         if tts_notify:
@@ -280,10 +286,14 @@ async def send_tts_message(conn: "ConnectionHandler", state, text=None):
             await sendAudio(conn, audios)
         # 等待所有音频包发送完成
         await _wait_for_audio_completion(conn)
+
+        # 检查是否是当前轮次
+        if current_sentence_id != conn.sentence_id:
+            return
+
         # 停止音频发送循环（仅在流控器已初始化时调用）
         if hasattr(conn, "audio_rate_controller") and conn.audio_rate_controller:
             conn.audio_rate_controller.stop_sending()
-        # 清除服务端讲话状态
         conn.clearSpeakStatus()
 
     # 发送消息到客户端

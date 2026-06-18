@@ -2,7 +2,7 @@
   <el-header class="header">
     <div class="header-container">
       <!-- 左侧元素 -->
-      <div class="header-left" @click="goHome">
+      <div class="header-left" @click="handleRouter('home')">
         <img loading="lazy" alt="" src="@/assets/xiaozhi-logo.png" class="logo-img" />
         <img loading="lazy" alt="" :src="xiaozhiAiIcon" class="brand-img" />
       </div>
@@ -14,7 +14,7 @@
             $route.path === '/home' ||
             $route.path === '/role-config' ||
             $route.path === '/device-management',
-        }" @click="goHome">
+        }" @click="handleRouter('home')">
           <img loading="lazy" alt="" src="@/assets/header/robot.png" :style="{
             filter:
               $route.path === '/home' ||
@@ -27,7 +27,8 @@
         </div>
         <!-- 普通用户显示音色克隆 -->
         <div v-if="!userInfo.superAdmin && featureStatus.voiceClone" class="equipment-management"
-          :class="{ 'active-tab': $route.path === '/voice-clone-management' }" @click="goVoiceCloneManagement">
+          :class="{ 'active-tab': $route.path === '/voice-clone-management' }"
+          @click="handleRouter('voiceCloneManagement')">
           <img loading="lazy" alt="" src="@/assets/header/voice.png" :style="{
             filter:
               $route.path === '/voice-clone-management'
@@ -38,11 +39,12 @@
         </div>
 
         <!-- 超级管理员显示音色克隆下拉菜单 -->
-        <el-dropdown v-if="userInfo.superAdmin && featureStatus.voiceClone" trigger="click" class="equipment-management more-dropdown" :class="{
-          'active-tab':
-            $route.path === '/voice-clone-management' ||
-            $route.path === '/voice-resource-management',
-        }" @visible-change="handleVoiceCloneDropdownVisibleChange">
+        <el-dropdown v-if="userInfo.superAdmin && featureStatus.voiceClone" trigger="click"
+          class="equipment-management more-dropdown" :class="{
+            'active-tab':
+              $route.path === '/voice-clone-management' ||
+              $route.path === '/voice-resource-management',
+          }" @visible-change="handleVoiceCloneDropdownVisibleChange">
           <span class="el-dropdown-link">
             <img loading="lazy" alt="" src="@/assets/header/voice.png" :style="{
               filter:
@@ -55,17 +57,17 @@
             <i class="el-icon-arrow-down el-icon--right" :class="{ 'rotate-down': voiceCloneDropdownVisible }"></i>
           </span>
           <el-dropdown-menu slot="dropdown">
-            <el-dropdown-item @click.native="goVoiceCloneManagement">
+            <el-dropdown-item @click.native="handleRouter('voiceCloneManagement')">
               {{ $t("header.voiceCloneManagement") }}
             </el-dropdown-item>
-            <el-dropdown-item @click.native="goVoiceResourceManagement">
+            <el-dropdown-item @click.native="handleRouter('voiceResourceManagement')">
               {{ $t("header.voiceResourceManagement") }}
             </el-dropdown-item>
           </el-dropdown-menu>
         </el-dropdown>
 
-        <div v-if="userInfo.superAdmin" class="equipment-management" :class="{ 'active-tab': $route.path === '/model-config' }"
-          @click="goModelConfig">
+        <div v-if="userInfo.superAdmin" class="equipment-management"
+          :class="{ 'active-tab': $route.path === '/model-config' }" @click="handleRouter('modelConfig')">
           <img loading="lazy" alt="" src="@/assets/header/model_config.png" :style="{
             filter:
               $route.path === '/model-config' ? 'brightness(0) invert(1)' : 'None',
@@ -74,12 +76,21 @@
         </div>
         <div v-if="featureStatus.knowledgeBase" class="equipment-management"
           :class="{ 'active-tab': $route.path === '/knowledge-base-management' || $route.path === '/knowledge-file-upload' }"
-          @click="goKnowledgeBaseManagement">
+          @click="handleRouter('knowledgeBaseManagement')">
           <img loading="lazy" alt="" src="@/assets/header/knowledge_base.png" :style="{
             filter:
               $route.path === '/knowledge-base-management' || $route.path === '/knowledge-file-upload' ? 'brightness(0) invert(1)' : 'None',
           }" />
           <span class="nav-text">{{ $t("header.knowledgeBase") }}</span>
+        </div>
+        <div v-if="featureStatus.addressBook" class="equipment-management"
+          :class="{ 'active-tab': $route.path === '/address-book-management' }"
+          @click="handleRouter('addressBookManagement')">
+          <img loading="lazy" alt="" src="@/assets/header/address_book.png" :style="{
+            filter:
+              $route.path === '/address-book-management' ? 'brightness(0) invert(1)' : 'None',
+          }" />
+          <span class="nav-text">{{ $t("header.addressBook") }}</span>
         </div>
         <el-dropdown v-if="userInfo.superAdmin" trigger="click" class="equipment-management more-dropdown" :class="{
           'active-tab':
@@ -110,30 +121,33 @@
             <i class="el-icon-arrow-down el-icon--right" :class="{ 'rotate-down': paramDropdownVisible }"></i>
           </span>
           <el-dropdown-menu slot="dropdown">
-            <el-dropdown-item @click.native="goParamManagement">
+            <el-dropdown-item @click.native="handleRouter('paramManagement')">
               {{ $t("header.paramManagement") }}
             </el-dropdown-item>
-            <el-dropdown-item @click.native="goUserManagement">
+            <el-dropdown-item @click.native="handleRouter('userManagement')">
               {{ $t("header.userManagement") }}
             </el-dropdown-item>
-            <el-dropdown-item @click.native="goOtaManagement">
+            <el-dropdown-item @click.native="handleRouter('otaManagement')">
               {{ $t("header.otaManagement") }}
             </el-dropdown-item>
-            <el-dropdown-item @click.native="goDictManagement">
+            <el-dropdown-item @click.native="handleRouter('dictManagement')">
               {{ $t("header.dictManagement") }}
             </el-dropdown-item>
-            <el-dropdown-item @click.native="goProviderManagement">
+            <el-dropdown-item @click.native="handleRouter('providerManagement')">
               {{ $t("header.providerManagement") }}
             </el-dropdown-item>
-            <el-dropdown-item @click.native="goAgentTemplateManagement">
+            <el-dropdown-item @click.native="handleRouter('agentTemplate')">
               {{ $t("header.agentTemplate") }}
             </el-dropdown-item>
-            <el-dropdown-item @click.native="goServerSideManagement">
+            <el-dropdown-item @click.native="handleRouter('replacementWordManagement')">
+              {{ $t("header.replacementWordManagement") }}
+            </el-dropdown-item>
+            <el-dropdown-item @click.native="handleRouter('serverSideManagement')">
               {{ $t("header.serverSideManagement") }}
             </el-dropdown-item>
-            <el-dropdown-item @click.native="goFeatureManagement">
-                {{ $t("header.featureManagement") }}
-              </el-dropdown-item>
+            <el-dropdown-item @click.native="handleRouter('featureManagement')">
+              {{ $t("header.featureManagement") }}
+            </el-dropdown-item>
           </el-dropdown-menu>
         </el-dropdown>
       </div>
@@ -187,11 +201,10 @@
 </template>
 
 <script>
-import userApi from "@/apis/module/user";
 import i18n, { changeLanguage } from "@/i18n";
+import featureManager from "@/utils/featureManager"; // 引入功能管理工具类
 import { mapActions, mapState } from "vuex";
 import ChangePasswordDialog from "./ChangePasswordDialog.vue"; // 引入修改密码弹窗组件
-import featureManager from "@/utils/featureManager"; // 引入功能管理工具类
 
 export default {
   name: "HeaderBar",
@@ -220,6 +233,24 @@ export default {
         label: "label",
         children: "children",
       },
+      // 跳转页面配置
+      routerPaths: {
+        home: "/home",
+        modelConfig: "/model-config",
+        knowledgeBaseManagement: "/knowledge-base-management",
+        addressBookManagement: "/address-book-management",
+        voiceCloneManagement: "/voice-clone-management",
+        voiceResourceManagement: "/voice-resource-management",
+        paramManagement: "/params-management",
+        userManagement: "/user-management",
+        otaManagement: "/ota-management",
+        dictManagement: "/dict-management",
+        providerManagement: "/provider-management",
+        agentTemplate: "/agent-template-management",
+        replacementWordManagement: "/replacement-word-management",
+        serverSideManagement: "/server-side-management",
+        featureManagement: "/feature-management",
+      }
     };
   },
   computed: {
@@ -227,6 +258,7 @@ export default {
       featureStatus: (state) => ({
         voiceClone: state.pubConfig.systemWebMenu?.features?.voiceClone?.enabled, // 音色克隆功能状态
         knowledgeBase: state.pubConfig.systemWebMenu?.features?.knowledgeBase?.enabled, // 知识库功能状态
+        addressBook: state.pubConfig.systemWebMenu?.features?.addressBook?.enabled, // 通讯录功能状态
       }),
       userInfo: (state) => state.userInfo,
     }),
@@ -331,49 +363,8 @@ export default {
     window.removeEventListener("resize", this.checkScreenSize);
   },
   methods: {
-    goHome() {
-      // 跳转到首页
-      this.$router.push("/home");
-    },
-    goUserManagement() {
-      this.$router.push("/user-management");
-    },
-    goModelConfig() {
-      this.$router.push("/model-config");
-    },
-    goKnowledgeBaseManagement() {
-      this.$router.push("/knowledge-base-management");
-    },
-    goVoiceCloneManagement() {
-      this.$router.push("/voice-clone-management");
-    },
-    goParamManagement() {
-      this.$router.push("/params-management");
-    },
-    goOtaManagement() {
-      this.$router.push("/ota-management");
-    },
-    goDictManagement() {
-      this.$router.push("/dict-management");
-    },
-    goProviderManagement() {
-      this.$router.push("/provider-management");
-    },
-    goServerSideManagement() {
-      this.$router.push("/server-side-management");
-    },
-
-    // 跳转到音色资源管理
-    goVoiceResourceManagement() {
-      this.$router.push("/voice-resource-management");
-    },
-    // 添加默认角色模板管理导航方法
-    goAgentTemplateManagement() {
-      this.$router.push("/agent-template-management");
-    },
-    // 跳转到功能管理
-    goFeatureManagement() {
-      this.$router.push("/feature-management");
+    handleRouter(type) {
+      this.$router.push(this.routerPaths[type]);
     },
     // 加载功能状态
     async loadFeatureStatus() {
@@ -679,7 +670,7 @@ export default {
   gap: 25px;
   position: absolute;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translateX(calc(-50% - 80px));
 }
 
 .header-right {
@@ -696,7 +687,7 @@ export default {
   background: #deeafe;
   display: flex;
   justify-content: center;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 500;
   gap: 7px;
   color: #3d4566;
@@ -789,9 +780,11 @@ export default {
   color: #909399;
   visibility: hidden;
 }
+
 .more-dropdown {
   padding: 0;
 }
+
 .more-dropdown .el-dropdown-link {
   display: flex;
   align-items: center;
@@ -839,6 +832,7 @@ export default {
   flex-shrink: 0;
   cursor: pointer;
 }
+
 .el-user-dropdown {
   cursor: pointer;
 }

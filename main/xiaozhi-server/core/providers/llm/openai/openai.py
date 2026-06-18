@@ -4,9 +4,18 @@ from openai.types import CompletionUsage
 from config.logger import setup_logging
 from core.utils.util import check_model_key
 from core.providers.llm.base import LLMProviderBase
+from urllib.parse import urlparse
 
 TAG = __name__
 logger = setup_logging()
+
+# 需要禁用思考模式的平台域名及其对应参数（默认关闭思考模式）
+THINKING_DISABLED_DOMAINS = {
+    "aliyuncs.com": {"enable_thinking": False},
+    "bigmodel.cn": {"thinking": {"type": "disabled"}},
+    "moonshot.cn": {"thinking": {"type": "disabled"}},
+    "volces.com": {"thinking": {"type": "disabled"}},
+}
 
 
 class LLMProvider(LLMProviderBase):
@@ -69,6 +78,16 @@ class LLMProvider(LLMProviderBase):
                 msg["content"] = ""
         return dialogue
 
+    def _apply_thinking_disabled(self, request_params: dict):
+        """根据域名自动禁用思考模式"""
+        parsed_url = urlparse(self.base_url)
+        domain = parsed_url.netloc
+        for disabled_domain, params in THINKING_DISABLED_DOMAINS.items():
+            if disabled_domain in domain:
+                request_params.setdefault("extra_body", {}).update(params)
+                logger.bind(tag=TAG).info(f"为域名 {domain} 禁用思考模式，参数: {params}")
+                break
+
     def response(self, session_id, dialogue, **kwargs):
         dialogue = self.normalize_dialogue(dialogue)
 
@@ -90,24 +109,30 @@ class LLMProvider(LLMProviderBase):
             if value is not None:
                 request_params[key] = value
 
+        # 禁用思考模式
+        self._apply_thinking_disabled(request_params)
+
         responses = self.client.chat.completions.create(**request_params)
 
         is_active = True
-        for chunk in responses:
-            try:
-                delta = chunk.choices[0].delta if getattr(chunk, "choices", None) else None
-                content = getattr(delta, "content", "") if delta else ""
-            except IndexError:
-                content = ""
-            if content:
-                if "<think>" in content:
-                    is_active = False
-                    content = content.split("<think>")[0]
-                if "</think>" in content:
-                    is_active = True
-                    content = content.split("</think>")[-1]
-                if is_active:
-                    yield content
+        try:            
+            for chunk in responses:
+                try:
+                    delta = chunk.choices[0].delta if getattr(chunk, "choices", None) else None
+                    content = getattr(delta, "content", "") if delta else ""
+                except IndexError:
+                    content = ""
+                if content:
+                    if "<think>" in content:
+                        is_active = False
+                        content = content.split("<think>")[0]
+                    if "</think>" in content:
+                        is_active = True
+                        content = content.split("</think>")[-1]
+                    if is_active:
+                        yield content
+        finally:
+            responses.close()
 
     def response_with_functions(self, session_id, dialogue, functions=None, **kwargs):
         dialogue = self.normalize_dialogue(dialogue)
@@ -130,18 +155,24 @@ class LLMProvider(LLMProviderBase):
             if value is not None:
                 request_params[key] = value
 
+        # 禁用思考模式
+        self._apply_thinking_disabled(request_params)
+
         stream = self.client.chat.completions.create(**request_params)
 
-        for chunk in stream:
-            if getattr(chunk, "choices", None):
-                delta = chunk.choices[0].delta
-                content = getattr(delta, "content", "")
-                tool_calls = getattr(delta, "tool_calls", None)
-                yield content, tool_calls
-            elif isinstance(getattr(chunk, "usage", None), CompletionUsage):
-                usage_info = getattr(chunk, "usage", None)
-                logger.bind(tag=TAG).info(
-                    f"Token 消耗：输入 {getattr(usage_info, 'prompt_tokens', '未知')}，"
-                    f"输出 {getattr(usage_info, 'completion_tokens', '未知')}，"
-                    f"共计 {getattr(usage_info, 'total_tokens', '未知')}"
-                )
+        try:
+            for chunk in stream:
+                if getattr(chunk, "choices", None):
+                    delta = chunk.choices[0].delta
+                    content = getattr(delta, "content", "")
+                    tool_calls = getattr(delta, "tool_calls", None)
+                    yield content, tool_calls
+                elif isinstance(getattr(chunk, "usage", None), CompletionUsage):
+                    usage_info = getattr(chunk, "usage", None)
+                    logger.bind(tag=TAG).info(
+                        f"Token 消耗：输入 {getattr(usage_info, 'prompt_tokens', '未知')}，"
+                        f"输出 {getattr(usage_info, 'completion_tokens', '未知')}，"
+                        f"共计 {getattr(usage_info, 'total_tokens', '未知')}"
+                    )
+        finally:
+            stream.close()

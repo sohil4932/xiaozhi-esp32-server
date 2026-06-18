@@ -33,10 +33,6 @@ async def handle_user_intent(conn: "ConnectionHandler", text):
     if await check_direct_exit(conn, filtered_text):
         return True
 
-    # 明确再见不被打断
-    if conn.is_exiting:
-        return True
-
     # 检查是否是唤醒词
     if await checkWakeupWords(conn, filtered_text):
         return True
@@ -62,7 +58,6 @@ async def check_direct_exit(conn: "ConnectionHandler", text):
         if text == cmd:
             conn.logger.bind(tag=TAG).info(f"识别到明确的退出命令: {text}")
             await send_stt_message(conn, text)
-            conn.is_exiting = True
             await conn.close()
             return True
     return False
@@ -219,8 +214,8 @@ async def process_intent_result(
 
 
 def speak_txt(conn: "ConnectionHandler", text):
-    # 记录文本
-    conn.tts_MessageText = text
+    # 记录文本到 sentence_id 映射
+    conn.tts.store_tts_text(conn.sentence_id, text)
 
     conn.tts.tts_text_queue.put(
         TTSMessageDTO(

@@ -15,8 +15,6 @@ TAG = __name__
 
 
 async def handleAudioMessage(conn: "ConnectionHandler", audio):
-    if conn.is_exiting:
-        return
     # 当前片段是否有人说话
     have_voice = conn.vad.is_vad(conn, audio)
     # 如果设备刚刚被唤醒，短暂忽略VAD检测
@@ -26,10 +24,6 @@ async def handleAudioMessage(conn: "ConnectionHandler", audio):
         if not hasattr(conn, "vad_resume_task") or conn.vad_resume_task.done():
             conn.vad_resume_task = asyncio.create_task(resume_vad_detection(conn))
         return
-    # manual 模式下不打断正在播放的内容
-    if have_voice:
-        if conn.client_is_speaking and conn.client_listen_mode != "manual":
-            await handleAbortMessage(conn)
     # 设备长时间空闲检测，用于say goodbye
     await no_voice_close_connect(conn, have_voice)
     # 接收音频
@@ -81,6 +75,7 @@ async def startToChat(conn: "ConnectionHandler", text):
         ):
             await max_out_size(conn)
             return
+
     # manual 模式下不打断正在播放的内容
     if conn.client_is_speaking and conn.client_listen_mode != "manual":
         await handleAbortMessage(conn)
@@ -94,6 +89,10 @@ async def startToChat(conn: "ConnectionHandler", text):
 
     # 意图未被处理，继续常规聊天流程，使用实际文本内容
     await send_stt_message(conn, actual_text)
+
+    # 准备开始新会话
+    conn.client_abort = False
+
     conn.executor.submit(conn.chat, actual_text)
 
 

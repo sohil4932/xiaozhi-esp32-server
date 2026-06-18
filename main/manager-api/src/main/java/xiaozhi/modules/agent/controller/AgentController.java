@@ -52,6 +52,7 @@ import xiaozhi.modules.agent.service.AgentContextProviderService;
 import xiaozhi.modules.agent.service.AgentPluginMappingService;
 import xiaozhi.modules.agent.service.AgentService;
 import xiaozhi.modules.agent.service.AgentTemplateService;
+import xiaozhi.modules.correctword.service.CorrectWordFileService;
 import xiaozhi.modules.agent.vo.AgentChatHistoryUserVO;
 import xiaozhi.modules.agent.vo.AgentInfoVO;
 import xiaozhi.modules.device.entity.DeviceEntity;
@@ -73,6 +74,7 @@ public class AgentController {
     private final AgentChatSummaryService agentChatSummaryService;
     private final RedisUtils redisUtils;
     private final AgentTagService agentTagService;
+    private final CorrectWordFileService correctWordFileService;
 
     @GetMapping("/list")
     @Operation(summary = "获取用户智能体列表")
@@ -150,6 +152,13 @@ public class AgentController {
         }
     }
 
+    @PostMapping("/chat-title/{sessionId}/generate")
+    @Operation(summary = "根据会话ID生成聊天标题")
+    public Result<Void> generateAndSaveChatTitle(@PathVariable String sessionId) {
+        agentChatSummaryService.generateAndSaveChatTitle(sessionId);
+        return new Result<Void>().ok(null);
+    }
+
     @PutMapping("/{id}")
     @Operation(summary = "更新智能体")
     @RequiresPermissions("sys:role:normal")
@@ -170,6 +179,8 @@ public class AgentController {
         agentPluginMappingService.deleteByAgentId(id);
         // 删除关联的上下文源配置
         agentContextProviderService.deleteByAgentId(id);
+        // 删除关联的替换词文件关联记录
+        correctWordFileService.deleteMappingsByAgentId(id);
         // 再删除智能体
         agentService.deleteById(id);
         return new Result<>();

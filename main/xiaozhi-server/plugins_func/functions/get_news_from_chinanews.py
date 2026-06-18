@@ -18,10 +18,9 @@ GET_NEWS_FROM_CHINANEWS_FUNCTION_DESC = {
     "function": {
         "name": "get_news_from_chinanews",
         "description": (
-            "获取最新新闻，随机选择一条新闻进行播报。"
+            "当用户要求查看或收听新闻时调用（如'来条新闻''今天有什么新闻'）。"
             "用户可以指定新闻类型，如社会新闻、科技新闻、国际新闻等。"
             "如果没有指定，默认播报社会新闻。"
-            "用户可以要求获取详细内容，此时会获取新闻的详细内容。"
         ),
         "parameters": {
             "type": "object",
